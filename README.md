@@ -8,7 +8,7 @@
 
 ## 目前狀態與限制
 
-已在 Windows / Edge 與原開發帳號驗證兩站的恢復流程，包括頁面從未登入恢復顯示角色。其他使用者首次綁定、其他作業系統尚未完成端到端驗證。
+已在 Windows / Edge 與原開發帳號驗證兩站的恢復流程，包括頁面從未登入恢復顯示角色。Chrome 可透過下述 CDP 位址連線，但尚未實機驗證完整綁定流程；其他使用者首次綁定、其他作業系統也尚未完成端到端驗證。
 
 目前 `capture` 會從 localStorage 取第一枚含 `roleId` 的 `*_roleToken`，**不保證它是本次新綁定或目前帳號的憑證**，也可能讀到過期值。工具尚未實作保存前身份確認或完整帳號隔離。請在專用、乾淨的瀏覽器資料目錄操作，擷取後核對角色資訊。增加 `--wait` 不能解決舊資料被誤選的問題。
 
@@ -16,7 +16,7 @@
 
 ## 安裝
 
-需要 Python 3.10 以上、Git，以及可使用遠端偵錯的 Microsoft Edge。以下以 Windows PowerShell 為例：
+需要 Python 3.10 以上、Git，以及可使用遠端偵錯的 Google Chrome 或 Microsoft Edge。以下以 Windows PowerShell 為例：
 
 ```powershell
 git clone https://github.com/MoLinOwO/swordofjustice-session.git
@@ -29,25 +29,58 @@ python -m pip install -r requirements.txt
 準備專用的瀏覽器 User Data 目錄及自己的 session 檔案。這兩個路徑應位於 repo 以外：
 
 ```powershell
-$browserData = Join-Path $env:LOCALAPPDATA 'SwordSessionBrowser\account-a'
 $sessionFile = Join-Path $env:LOCALAPPDATA 'sword-session\account-a.json'
-$edge = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+$cdpUrl = 'http://127.0.0.1:9222'
 ```
 
-先確定 9222 未被另一個遠端偵錯的瀏覽器占用，再啟動 Edge。Edge 安裝位置不同時，請調整 `$edge`：
+### 開啟 Chrome 的 9222
+
+先確定 9222 未被其他瀏覽器占用，再執行：
 
 ```powershell
+$browserData = Join-Path $env:LOCALAPPDATA 'SwordSessionBrowser\chrome-account-a'
+$chrome = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
+Start-Process -FilePath $chrome -ArgumentList @(
+    '--remote-debugging-port=9222',
+    "--user-data-dir=`"$browserData`"",
+    '--remote-allow-origins=http://127.0.0.1:9222,http://localhost:9222'
+) -WindowStyle Normal
+```
+
+Chrome 若不是安裝在上述位置，也可能位於 `C:\Program Files (x86)\Google\Chrome\Application\chrome.exe` 或 `%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe`，請調整 `$chrome`。allow-origins 只允許本工具使用的本機 Origin，不要改成 `*`。
+
+Chrome 136 起，遠端偵錯旗標必須搭配非預設的 User Data 目錄；上述指令會使用專用目錄，需要在其中重新登入。見 [Chrome 官方說明](https://developer.chrome.com/blog/remote-debugging-port)。
+
+### 開啟 Edge 的 9222
+
+Chrome 與 Edge 使用同一個 9222 埠時，請擇一啟動；切換前先關閉占用該埠的偵錯瀏覽器。Edge 指令為：
+
+```powershell
+$browserData = Join-Path $env:LOCALAPPDATA 'SwordSessionBrowser\edge-account-a'
+$edge = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
 Start-Process -FilePath $edge -ArgumentList @(
     '--remote-debugging-port=9222',
     "--user-data-dir=`"$browserData`""
 ) -WindowStyle Normal
 ```
 
-工具不會自動啟動瀏覽器；`--edge-udd` 指向的是 User Data 根目錄，不是其下的 `Default` 資料夾。
+Edge 若安裝在 `C:\Program Files\Microsoft\Edge\Application\msedge.exe`，請調整 `$edge`。參考 [Edge 官方 DevTools Protocol 說明](https://learn.microsoft.com/en-us/microsoft-edge/devtools/protocol/)。
+
+### 確認連線並擷取
+
+兩種瀏覽器都可以用以下指令確認 CDP 位址：
 
 ```powershell
-python scripts/sword_session.py --edge-udd $browserData --store $sessionFile capture vip --wait 300
+Invoke-RestMethod "$cdpUrl/json/version" | Select-Object Browser, webSocketDebuggerUrl
 ```
+
+工具不會自動啟動瀏覽器。`--cdp-url` 明確指定本機 CDP HTTP 位址，優先於 `--edge-udd`，不需要 DevToolsActivePort 檔案。務必核對回應的 Browser 與實際啟動的瀏覽器相符。
+
+```powershell
+python scripts/sword_session.py --cdp-url $cdpUrl --store $sessionFile capture vip --wait 300
+```
+
+若使用 Edge 的「允許遠端偵錯」模式，HTTP 端點可能回 404，但 User Data 目錄有有效的 DevToolsActivePort，可改用 `--edge-udd $browserData` 取代 `--cdp-url $cdpUrl`。雖然參數名稱保留 edge，實際可指定 Chrome 或 Edge 的 User Data 根目錄；不能指向其下的 Default 子目錄。Chrome 固定埠模式應使用 --cdp-url，不要依賴 port 檔案。
 
 在工具開啟的頁面登入自己的帳號、完成驗證與角色綁定。`capture` 最多等待指定秒數，取得憑證後會嘗試簽發並保存 session。它會監看請求並讀取 localStorage，不是系統層級的封包側錄器。
 
@@ -75,11 +108,11 @@ python scripts/sword_session.py --store $sessionFile restore vip
 python scripts/sword_session.py --store $sessionFile status
 ```
 
-同時讓瀏覽器頁面顯示登入，需要前述 Edge / CDP 連線：
+同時讓瀏覽器頁面顯示登入，需要前述 Chrome 或 Edge 的 CDP 連線：
 
 ```powershell
-python scripts/sword_session.py --edge-udd $browserData --store $sessionFile restore vip --browser
-python scripts/sword_session.py --edge-udd $browserData --store $sessionFile restore official --browser
+python scripts/sword_session.py --cdp-url $cdpUrl --store $sessionFile restore vip --browser
+python scripts/sword_session.py --cdp-url $cdpUrl --store $sessionFile restore official --browser
 ```
 
 `--browser` 會注入活動 account cookie，並重新載入對應頁面。請另行核對頁面角色與「登出」入口；`status` 的 `code=0` 只表示 API 接受 session，不代表已驗證頁面顯示。
@@ -88,7 +121,7 @@ python scripts/sword_session.py --edge-udd $browserData --store $sessionFile res
 
 ## 指令參考
 
-全域參數 `--store` 與 `--edge-udd` 放在子指令之前。
+全域參數 `--store`、`--cdp-url` 與 `--edge-udd` 放在子指令之前。使用 --cdp-url 時，工具直接連該位址，不會核對它是否屬於 --edge-udd 所指的目錄。
 
 | 指令 | 用途 | 需要瀏覽器／CDP |
 |---|---|---|
@@ -125,11 +158,11 @@ session 檔包含明文憑證。程式會嘗試設定檔案 ACL，授權目前�
 python -m unittest discover -s scripts -p 'test_*.py' -v
 ```
 
-現有 22 項測試使用假資料與 mock，不會呼叫網站或修改瀏覽器；測試通過不代表新使用者的首次綁定已通過實機驗證。
+現有 28 項測試使用假資料與 mock，不會呼叫網站或修改瀏覽器；包含指定 CDP 位址及既有 port 檔案的連線探索測試。測試通過不代表 Chrome 或新使用者的首次綁定已通過實機驗證。
 
 ## 連線排查
 
-- 找不到 `DevToolsActivePort`：確認 Edge 已以指定 User Data 目錄開啟遠端偵錯。
+- 找不到 `DevToolsActivePort`：固定 9222 埠請使用 --cdp-url http://127.0.0.1:9222；只有使用 --edge-udd 的探索路徑才依賴此檔案。
 - CDP 回 403：確認瀏覽器允許偵錯連線，並確認埠與 User Data 目錄相符。
 - `DevToolsActivePort` 存在仍連不上：檔案可能殘留，不代表瀏覽器目前可連線。不要只憑 `/json/version` 回 404 就判定 CDP 未啟用；本機曾在該端點回 404 時仍能連到檔案記錄的 WebSocket。
 - API 連線失敗：先排查網路與服務回應，不能直接推定 token 過期。

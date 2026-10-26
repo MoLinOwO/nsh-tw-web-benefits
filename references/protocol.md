@@ -29,7 +29,7 @@ nshmhmt_common_h5_account_token=<jwt>; domain=.swordofjustice.com; path=/; secur
 GET /public/nshm/common_activity_auth/logout/account
 ```
 
-帶上 `nshmhmt_common_h5_account_token` cookie。觀察到回應 code == 0，並以 value=deleted; Max-Age=0 要求刪除該 cookie；這不能證明伺服器撤銷了所有舊 token。Python HTTP 呼叫也不會自動更改 Edge 的 cookie，需另行操作。
+帶上 `nshmhmt_common_h5_account_token` cookie。觀察到回應 code == 0，並以 value=deleted; Max-Age=0 要求刪除該 cookie；這不能證明伺服器撤銷了所有舊 token。Python HTTP 呼叫也不會自動更改瀏覽器的 cookie，需另行操作。
 
 本機帳號測試中，此操作後 roleInfoToken 仍能簽發；其他帳號、其他登出流程或未來版本可能不同。
 
@@ -77,6 +77,10 @@ official 的 API **強制要求 `area: hmt` header**，缺少會回 `code 20002`
 殘留的 UniSDK 登入或角色資料可能使頁面重載後恢復登入。工具 logout --browser 目前只刪 account cookie 與符合 roleToken / loginAid 的 localStorage key，不會清掉上面所有狀態，不能當成完整帳號切換工具。
 
 ## CDP 操作注意
+
+Chrome 與 Edge 的固定 9222 埠使用 --cdp-url http://127.0.0.1:9222，工具從 /json/version 的 webSocketDebuggerUrl 建立連線；失敗時會停止，不會暗中改連另一個 profile。不帶此參數時保留既有的 --edge-udd / DevToolsActivePort 探索方式。
+
+Chromium 的固定埠模式不應依賴 DevToolsActivePort 檔案：目前[上游原始碼](https://chromium.googlesource.com/chromium/src/+/main/chrome/browser/devtools/remote_debugging_server.cc)只在 port=0 時設定輸出目錄。Chrome 136 起也要求[非預設的 User Data 目錄](https://developer.chrome.com/blog/remote-debugging-port)。啟動範例見 [README.md](../README.md#首次綁定或重新擷取)。Chrome 完整綁定流程尚未實機驗證。
 
 用 `Storage.setCookies` 帶 `expires: 1` 寫入過期 cookie，瀏覽器會自動移除它，這是只刪特定網域 cookie 的安全做法。
 

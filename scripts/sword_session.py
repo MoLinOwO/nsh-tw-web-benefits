@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Capture and reuse a logged-in session for the swordofjustice.com H5 activities.
 
-The user logs in and binds their own game role manually in Edge. This tool
-attaches to the running Edge profile over CDP, watches the traffic, and stores
+The user logs in and binds their own game role manually in Chrome or Edge. This tool
+attaches to the running browser over CDP, watches the traffic, and stores
 the resulting session material locally so later automation can reuse it.
 
 It does not bypass the NetEase verification step: the role binding and any
@@ -163,12 +163,34 @@ class Cdp:
             pass
 
 
-def browser_ws(udd: Path) -> str:
+def browser_ws(udd: Path, cdp_url: str | None = None) -> str:
+    if cdp_url:
+        endpoint = urllib.parse.urlparse(cdp_url)
+        if (endpoint.scheme not in ("http", "https")
+                or endpoint.hostname not in ("localhost", "127.0.0.1", "::1")
+                or endpoint.username or endpoint.password
+                or endpoint.path not in ("", "/") or endpoint.query or endpoint.fragment):
+            raise SystemExit("--cdp-url 需為本機 HTTP 位址，例如 http://127.0.0.1:9222")
+        try:
+            response = requests.get(cdp_url.rstrip("/") + "/json/version", timeout=5)
+            response.raise_for_status()
+            metadata = response.json()
+            if not isinstance(metadata, dict):
+                raise ValueError("CDP /json/version 回應需為 JSON 物件")
+            ws_url = metadata.get("webSocketDebuggerUrl")
+            parsed = urllib.parse.urlparse(ws_url) if isinstance(ws_url, str) else None
+            if (not parsed or parsed.scheme not in ("ws", "wss")
+                    or parsed.hostname not in ("localhost", "127.0.0.1", "::1")
+                    or parsed.username or parsed.password):
+                raise ValueError("未取得有效的本機 webSocketDebuggerUrl")
+            return ws_url
+        except (requests.RequestException, ValueError) as exc:
+            raise SystemExit(f"無法連接指定的 CDP 位址：{exc}") from exc
     pf = udd / "DevToolsActivePort"
     if not pf.exists():
         raise SystemExit(
-            f"找不到 {pf}\n請先在 Edge 開啟遠端偵錯：edge://inspect/#remote-debugging，"
-            "或以 --remote-debugging-port=9222 啟動 Edge。"
+            f"找不到 {pf}\n請確認 --edge-udd 目錄與遠端偵錯設定。"
+            "若 Chrome 或 Edge 以固定 9222 埠啟動，請指定 --cdp-url http://127.0.0.1:9222。"
         )
     port, path = pf.read_text().splitlines()[:2]
     return f"ws://127.0.0.1:{port.strip()}{path.strip()}"
@@ -363,7 +385,7 @@ def build_session(site_key: str, role_info_token: str, role_cookie: str | None) 
 def cmd_capture(args) -> int:
     site = SITES[args.site]
     print(f"== capture {site['label']} ==")
-    cdp = Cdp(browser_ws(args.edge_udd))
+    cdp = Cdp(browser_ws(args.edge_udd, args.cdp_url))
     try:
         sid = open_page(cdp, site["page"])
         print(f"已開啟：{site['page']}")
@@ -528,7 +550,7 @@ def cmd_restore(args) -> int:
         return 1
 
     if args.browser:
-        cdp = Cdp(browser_ws(args.edge_udd))
+        cdp = Cdp(browser_ws(args.edge_udd, args.cdp_url))
         try:
             sid = find_or_open_page(cdp, site["page"])
             cdp.send("Storage.setCookies", {"cookies": [{
@@ -570,7 +592,7 @@ def cmd_logout(args) -> int:
     print(f"  伺服器登出：code={result['code']} message={result['message']}")
 
     if args.browser:
-        cdp = Cdp(browser_ws(args.edge_udd))
+        cdp = Cdp(browser_ws(args.edge_udd, args.cdp_url))
         try:
             sid = find_or_open_page(cdp, site["page"])
             # Overwrite with an expired cookie so the browser drops it.
@@ -609,7 +631,8 @@ def main(argv=None) -> int:
                 pass
     parser = argparse.ArgumentParser(description="swordofjustice.com 已登入 session 擷取與重用工具")
     parser.add_argument("--edge-udd", type=Path, default=DEFAULT_EDGE_UDD,
-                        help="Edge 使用者資料目錄")
+                        help="瀏覽器 User Data 目錄（預設 Edge，Chrome 也可指定）")
+    parser.add_argument("--cdp-url", help="明確指定本機 CDP HTTP 位址，例如 http://127.0.0.1:9222；優先於 --edge-udd")
     parser.add_argument("--store", type=Path, default=DEFAULT_STORE,
                         help="session 儲存檔位置")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -639,7 +662,7 @@ def main(argv=None) -> int:
     res = sub.add_parser("restore", help="用 roleInfoToken 重新簽發並注入瀏覽器 Cookie，恢復登入")
     res.add_argument("site", choices=sorted(SITES))
     res.add_argument("--browser", action="store_true",
-                     help="同時把簽發的 token 注入 Edge 並重新載入頁面")
+                     help="同時把簽發的 token 注入指定瀏覽器並重新載入頁面")
     res.set_defaults(func=cmd_restore)
 
     out = sub.add_parser("logout", help="伺服器端登出並清除瀏覽器 session（roleInfoToken 保留）")

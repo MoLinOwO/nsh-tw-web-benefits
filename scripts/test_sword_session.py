@@ -3,6 +3,8 @@ import base64
 import json
 import time
 import unittest
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 import sword_session as S
 
@@ -69,6 +71,51 @@ class TestStore(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(S.load_store(Path(tmp) / "nope.json"), {})
+
+
+class TestBrowserDiscovery(unittest.TestCase):
+    @patch.object(S.requests, "get")
+    def test_explicit_endpoint_works_without_port_file(self, get):
+        response = Mock()
+        response.json.return_value = {"webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/browser/test"}
+        get.return_value = response
+        self.assertEqual(S.browser_ws(Path("unused"), "http://127.0.0.1:9222/"),
+                         "ws://127.0.0.1:9222/devtools/browser/test")
+        get.assert_called_once_with("http://127.0.0.1:9222/json/version", timeout=5)
+        response.raise_for_status.assert_called_once()
+
+    @patch.object(S.requests, "get")
+    def test_endpoint_failure_stops_without_profile_fallback(self, get):
+        get.side_effect = S.requests.ConnectionError("unavailable")
+        with self.assertRaises(SystemExit):
+            S.browser_ws(Path("unused"), "http://127.0.0.1:9222")
+
+    @patch.object(S.requests, "get")
+    def test_missing_websocket_is_rejected(self, get):
+        for metadata in ({}, [], None):
+            with self.subTest(metadata=metadata):
+                get.return_value.json.return_value = metadata
+                with self.assertRaises(SystemExit):
+                    S.browser_ws(Path("unused"), "http://127.0.0.1:9222")
+
+    @patch.object(S.requests, "get")
+    def test_remote_endpoint_is_rejected_before_request(self, get):
+        with self.assertRaises(SystemExit):
+            S.browser_ws(Path("unused"), "https://example.com")
+        get.assert_not_called()
+
+    @patch.object(S.requests, "get")
+    def test_remote_websocket_is_rejected(self, get):
+        get.return_value.json.return_value = {"webSocketDebuggerUrl": "ws://example.com/browser/test"}
+        with self.assertRaises(SystemExit):
+            S.browser_ws(Path("unused"), "http://127.0.0.1:9222")
+
+    def test_existing_port_file_discovery_still_works(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            udd = Path(tmp)
+            (udd / "DevToolsActivePort").write_text("9222\n/devtools/browser/test\n", encoding="utf-8")
+            self.assertEqual(S.browser_ws(udd), "ws://127.0.0.1:9222/devtools/browser/test")
 
 
 class TestHarvest(unittest.TestCase):

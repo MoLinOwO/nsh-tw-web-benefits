@@ -41,7 +41,8 @@ python scripts/sword_session.py refresh vip              # 失效時重簽，失
 
 ## 執行前提
 
-- capture 與帶有 --browser 的指令需要 Edge 開啟遠端偵錯。工具讀 `DevToolsActivePort` 取得 CDP 位址；檔案存在不代表連線必然可用。--edge-udd 指向 User Data 根目錄，不是其下的 Default 子目錄。
+- capture 與帶有 --browser 的指令需要 Chrome 或 Edge 開啟遠端偵錯。固定 9222 埠使用全域參數 --cdp-url http://127.0.0.1:9222，透過 /json/version 取得 WebSocket 位址。不帶 --cdp-url 時才讀 --edge-udd 所指目錄的 DevToolsActivePort；參數名稱保留 edge，但目錄也可屬於 Chrome。--cdp-url 優先，工具不會核對位址與資料目錄是否相符。
+- Chrome 與 Edge 的 9222 啟動指令及檢查方式見 [README.md](README.md#首次綁定或重新擷取)。Chrome 136 起需使用非預設的 --user-data-dir；兩種瀏覽器不能同時占用 9222。只允許本機 CDP 位址。
 - 需要 `requests` 與 `websocket-client`：`pip install requests websocket-client`。
 - 首次使用需要 `capture`：由使用者在瀏覽器手動登入、驗證並綁定角色，工具從封包或 localStorage 取得 `roleInfoToken`。先讀下方「重新擷取與目前限制」。
 
@@ -91,7 +92,7 @@ python scripts/sword_session.py capture vip --wait 300
 
 持有有效 roleInfoToken 的人能重用對應角色的活動登入權限。不要分享 token、sessions.json、其備份或瀏覽器 profile；不要把一次篡改被拒絕的測試擴大解讀為完整的安全保證。
 
-其他人在自己電腦使用時，交付整個 skill 目錄即可。他們需安裝 Python、requests、websocket-client，以自己的 Edge 完成手動綁定並保存自己的 session。腳本預設路徑以 Windows 為主，其他平台尚未驗證。
+其他人在自己電腦使用時，交付整個 skill 目錄即可。他們需安裝 Python、requests、websocket-client，以自己的 Chrome 或 Edge 完成手動綁定並保存自己的 session。Chrome 完整登入流程尚未實機驗證；腳本預設路徑以 Windows 為主，其他平台也尚未驗證。
 
 預設 session 存在目前作業系統使用者的 %LOCALAPPDATA%\sword-session\sessions.json；這是「每個 Windows 使用者一份」，不是「每個遊戲帳號一份」。同一個 Windows 使用者切換遊戲帳號會共用檔案。
 
