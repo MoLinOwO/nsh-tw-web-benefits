@@ -54,8 +54,25 @@ LOGOUT_PATH = "/public/nshm/common_activity_auth/logout/account"
 ACCOUNT_COOKIE = "nshmhmt_common_h5_account_token"
 LOGIN_INFO_PATH = "/public/nshm/common_activity_auth/login/info/account"
 ROLE_COOKIE = "gdxidpyhxdE"
-DEFAULT_EDGE_UDD = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Edge" / "User Data"
-DEFAULT_STORE = Path(os.environ.get("LOCALAPPDATA", "")) / "sword-session" / "sessions.json"
+
+
+def default_paths(platform: str | None = None) -> tuple[Path, Path]:
+    home = Path.home()
+    if (platform or sys.platform) == "win32":
+        local = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
+        if not local.is_absolute():
+            local = home / "AppData" / "Local"
+        return local / "Microsoft" / "Edge" / "User Data", local / "sword-session" / "sessions.json"
+    config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+    state = Path(os.environ.get("XDG_STATE_HOME") or home / ".local" / "state")
+    if not config.is_absolute():
+        config = home / ".config"
+    if not state.is_absolute():
+        state = home / ".local" / "state"
+    return config / "microsoft-edge", state / "sword-session" / "sessions.json"
+
+
+DEFAULT_EDGE_UDD, DEFAULT_STORE = default_paths()
 
 SITES = {
     "vip": {
@@ -340,7 +357,7 @@ def load_store(path: Path) -> dict:
 
 
 def save_store(path: Path, store: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     path.write_text(json.dumps(store, ensure_ascii=False, indent=2), encoding="utf-8")
     if os.name == "nt":
         # Restrict the credential file to the current user only.
@@ -782,7 +799,7 @@ def main(argv=None) -> int:
                         help="瀏覽器 User Data 目錄（預設 Edge，Chrome 也可指定）")
     parser.add_argument("--cdp-url", help="明確指定本機 CDP HTTP 位址，例如 http://127.0.0.1:9222；優先於 --edge-udd")
     parser.add_argument("--store", type=Path, default=DEFAULT_STORE,
-                        help="session 儲存檔位置")
+                        help="session 儲存檔位置（預設：%(default)s）")
     sub = parser.add_subparsers(dest="command", required=True)
 
     cap = sub.add_parser("capture", help="開啟頁面並監看封包，擷取綁定後的 session")

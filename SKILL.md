@@ -7,6 +7,8 @@ description: 管理逆水寒台服官網會員中心與簽到福利，包括登�
 
 用 `scripts/sword_session.py` 管理 swordofjustice.com 台服官網會員中心與簽到福利活動頁（vip、official）的已登入 session。Repository 名稱為 nsh-tw-web-benefits，skill 識別名稱為 swordofjustice-session。
 
+本 repo 目前沒有桌面 GUI 或 EXE 包裝，玩家使用 Python CLI。完整 standalone Linux 安裝與操作流程見 [README.md](README.md#玩家快速流程linux)；本 skill 僅供代理遵循下列授權、判斷與安全規則。
+
 ## 適用範圍
 
 只處理使用者自己的帳號與已授權的角色綁定。工具**不繞過 CAPTCHA 或 NetEase 驗證**：角色綁定與驗證一律由使用者手動完成，工具只擷取與重用既有的授權憑證。
@@ -41,11 +43,15 @@ python scripts/sword_session.py benefits all --claim     # 有使用者領取授
 
 站點 key 只有 `vip`（會員中心）與 `official`（週三小確幸）。以上指令從 skill 根目錄執行，或把腳本路徑換成安裝位置的絕對路徑。
 
+## Standalone 使用
+
+玩家安裝方式、Linux CLI 範例與目前驗證範圍集中於 [README.md 的 standalone Linux 流程](README.md#玩家快速流程linux)。代理應依本 skill 的授權規則處理使用者要求，不應把文件範例當成已執行的領獎操作。
+
 ## 執行前提
 
 - capture 與帶有 --browser 的指令需要 Chrome 或 Edge 開啟遠端偵錯。固定 9222 埠使用全域參數 --cdp-url http://127.0.0.1:9222，透過 /json/version 取得 WebSocket 位址。不帶 --cdp-url 時才讀 --edge-udd 所指目錄的 DevToolsActivePort；參數名稱保留 edge，但目錄也可屬於 Chrome。--cdp-url 優先，工具不會核對位址與資料目錄是否相符。
 - Chrome 與 Edge 的 9222 啟動指令及檢查方式見 [README.md](README.md#首次綁定或重新擷取)。Chrome 136 起需使用非預設的 --user-data-dir；兩種瀏覽器不能同時占用 9222。只允許本機 CDP 位址。
-- 需要 `requests` 與 `websocket-client`：`pip install requests websocket-client`。
+- 需要 Python 3.10 以上及 `requirements.txt` 中的套件；安裝方式見 [README.md](README.md#安裝)。
 - 首次使用需要 `capture`：由使用者在瀏覽器手動登入、驗證並綁定角色，工具從封包或 localStorage 取得 `roleInfoToken`。先讀下方「重新擷取與目前限制」。
 
 ## MCP、瀏覽器與 HTTP 的依賴
@@ -107,9 +113,11 @@ python scripts/sword_session.py capture vip --wait 300
 
 持有有效 roleInfoToken 的人能重用對應角色的活動登入權限。不要分享 token、sessions.json、其備份或瀏覽器 profile；不要把一次篡改被拒絕的測試擴大解讀為完整的安全保證。
 
-其他人在自己電腦使用時，交付整個 skill 目錄即可。他們需安裝 Python、requests、websocket-client，以自己的 Chrome 或 Edge 完成手動綁定並保存自己的 session。Chrome 完整登入流程尚未實機驗證；腳本預設路徑以 Windows 為主，其他平台也尚未驗證。
+其他人在自己電腦使用時，交付 repo 即可。他們需安裝 Python 與 requirements.txt 依賴，以自己的 Chrome 或 Edge 完成手動綁定並保存自己的 session。首次綁定需要 GUI 瀏覽器；Linux headless 在取得有效 session 後，可透過 HTTP 執行 restore（不帶 `--browser`）、status、mint 與 benefits。Linux 完整流程尚未實機驗證；目前 capture 讀取舊 token 的限制見「重新擷取與目前限制」。
 
-預設 session 存在目前作業系統使用者的 %LOCALAPPDATA%\sword-session\sessions.json；這是「每個 Windows 使用者一份」，不是「每個遊戲帳號一份」。同一個 Windows 使用者切換遊戲帳號會共用檔案。
+預設 session 路徑：Windows 為 `%LOCALAPPDATA%\sword-session\sessions.json`，`LOCALAPPDATA` 未設定時退回使用者 home 下的 `AppData/Local`；Linux 為 `${XDG_STATE_HOME:-$HOME/.local/state}/sword-session/sessions.json`。Linux 預設 Edge 設定目錄為 `${XDG_CONFIG_HOME:-$HOME/.config}/microsoft-edge`。相對的 XDG 變數會忽略並使用 home 下的預設目錄。POSIX 每次儲存都將 session 檔設為 `0600`；新建的最末層 store 目錄設為 `0700`，既有目錄權限不變。檔案仍是明文憑證，不是加密保管。這些預設值都是每位 OS 使用者共用，不是每個遊戲帳號一份。
+
+既有自訂 session 檔不會自動搬到新預設位置。若此前已用自訂位置（例如 Hermes 工作流程指定的位置），請繼續在所有指令加上 `--store /path/to/your-existing-session.json`，並以自己的實際路徑取代範例值。
 
 在同一台電腦管理多個人的帳號時，至少要分開瀏覽器 User Data 目錄與 --store 檔案，所有指令都指定相同的一組路徑；--store 本身不會隔離瀏覽器：
 
@@ -126,11 +134,13 @@ python scripts/sword_session.py --edge-udd 'D:\SwordProfiles\user-a' --store 'D:
 - 同一枚 roleInfoToken 已驗證可用於本工具支援的兩站；其他活動未驗證。
 - logout --browser 會刪除共用的活動 account cookie，以及目前網頁 origin 下所有符合 roleToken / loginAid 的 localStorage key，可能影響同源的其他活動；它不會完整清除 UniSDK 登入。只有使用者要求登出或測試時才執行。
 - 不使用全瀏覽器 cookie 清除操作，也不使用未確認存在的 Storage.clearCookies 方法。
-- save_store 會嘗試設定檔案 ACL，授權目前使用者、SYSTEM 與 Administrators；程式沒有檢查 icacls 是否成功，不能宣稱只有本人能讀或已驗證保護成功。
+- POSIX save_store 會將 session 檔設為 `0600`，但不會調整既有 store 目錄的權限；檔案仍未加密。Windows ACL 設定依 Windows 實作處理，不能宣稱資料已加密。
 - status 的 code=0 代表該 API 接受 session；不能單靠它證明瀏覽器頁面顯示登入。restore --browser 後另行讀取頁面，核對角色及登出入口。
 - 連線失敗先查網路或 CDP，不要直接推定 token 過期。需要重新啟動瀏覽器時，保留使用者原有分頁與 profile，遵循當前授權。
 
 ## 驗證
+
+WSL Ubuntu 24.04 / Python 3.12.3 的隔離 venv 已安裝依賴，48 項測試通過，包含 POSIX session 檔 `0600` 與新建末層 store 目錄 `0700`。CLI `--help`、`list`、缺少 store 的 `status` smoke checks 預期結果為退出碼 0／0／2。這不涵蓋 Linux 瀏覽器、live binding 或實際獎勵領取。
 
 ```powershell
 python -m unittest discover -s scripts -p 'test_*.py' -v

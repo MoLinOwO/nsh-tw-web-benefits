@@ -209,5 +209,54 @@ class TestRestore(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 0)
 
 
+class TestDefaultPaths(unittest.TestCase):
+    def paths(self, platform, environment):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            # ABS: values become absolute directories on the current test OS.
+            env = {key: str(home / value[4:]) if value.startswith("ABS:") else value
+                   for key, value in environment.items()}
+            with patch.object(S.Path, "home", return_value=home), patch.dict(S.os.environ, env, clear=True):
+                return home, S.default_paths(platform)
+
+    def test_windows_uses_local_app_data(self):
+        home, (browser, store) = self.paths("win32", {"LOCALAPPDATA": "ABS:local"})
+        self.assertEqual(browser, home / "local" / "Microsoft" / "Edge" / "User Data")
+        self.assertEqual(store, home / "local" / "sword-session" / "sessions.json")
+
+    def test_windows_missing_environment_does_not_use_working_directory(self):
+        home, (_, store) = self.paths("win32", {})
+        self.assertEqual(store, home / "AppData" / "Local" / "sword-session" / "sessions.json")
+
+    def test_windows_relative_environment_uses_home_fallback(self):
+        home, (_, store) = self.paths("win32", {"LOCALAPPDATA": "relative"})
+        self.assertEqual(store, home / "AppData" / "Local" / "sword-session" / "sessions.json")
+
+    def test_linux_defaults_ignore_windows_environment(self):
+        home, (browser, store) = self.paths("linux", {"LOCALAPPDATA": "ABS:windows"})
+        self.assertEqual(browser, home / ".config" / "microsoft-edge")
+        self.assertEqual(store, home / ".local" / "state" / "sword-session" / "sessions.json")
+
+    def test_linux_respects_absolute_xdg_paths(self):
+        home, (browser, store) = self.paths("linux", {"XDG_CONFIG_HOME": "ABS:config", "XDG_STATE_HOME": "ABS:state"})
+        self.assertEqual(browser, home / "config" / "microsoft-edge")
+        self.assertEqual(store, home / "state" / "sword-session" / "sessions.json")
+
+    def test_linux_ignores_relative_xdg_paths(self):
+        home, (browser, store) = self.paths("linux", {"XDG_CONFIG_HOME": "relative", "XDG_STATE_HOME": "relative"})
+        self.assertEqual(browser, home / ".config" / "microsoft-edge")
+        self.assertEqual(store, home / ".local" / "state" / "sword-session" / "sessions.json")
+
+    @unittest.skipIf(S.os.name == "nt", "POSIX permission bits require Linux")
+    def test_posix_store_file_and_new_directory_are_private(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "new-state-directory" / "sessions.json"
+            S.save_store(path, {"official": {"account_token": "fake"}})
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+
+
 if __name__ == "__main__":
     unittest.main()

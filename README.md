@@ -1,6 +1,10 @@
 # 逆水寒台服官網福利工具
 
-`nsh-tw-web-benefits` 面向《逆水寒》台服官網的會員中心、簽到與福利活動。提供 Python 登入 session 擷取、重用與恢復、免費簽到與會員獎勵領取，以及可供 Codex 等代理讀取的 `SKILL.md`。
+`nsh-tw-web-benefits` 面向《逆水寒》台服官網的會員中心、簽到與福利活動。提供 Python 登入 session 擷取、重用與恢復、免費簽到與會員獎勵領取，以及可供代理讀取的 `SKILL.md`。玩家也可以獨立使用 Python CLI，不需要 Agent、MCP、Codex 或 Hermes。
+
+目前沒有桌面 GUI 或 Windows EXE 包裝；玩家需使用 Python CLI。
+
+一般玩家的使用順序是：安裝依賴 → 開啟瀏覽器的 9222 → 手動登入與綁定 → 保存兩站 session → 查詢／執行領取。Windows 玩家依下方 [首次綁定或重新擷取](#首次綁定或重新擷取) 操作，Linux 玩家依 [玩家快速流程](#玩家快速流程linux) 操作；不需安裝任何 Agent。
 
 支援 [VIP 會員中心](https://www.swordofjustice.com/h5/20260424/vip/index.html#/) 與 [週三小確幸](https://www.swordofjustice.com/h5/20260722/officialwebfasthmt/#/)。
 
@@ -8,7 +12,7 @@
 
 ## 目前狀態與限制
 
-已在 Windows / Edge 與原開發帳號驗證兩站的恢復流程，包括頁面從未登入恢復顯示角色。Chrome 可透過下述 CDP 位址連線，但尚未實機驗證完整綁定流程；其他使用者首次綁定、其他作業系統也尚未完成端到端驗證。
+已在 Windows / Edge 與原開發帳號驗證兩站的恢復流程，包括頁面從未登入恢復顯示角色。WSL Ubuntu 24.04 / Python 3.12.3 的獨立虛擬環境中，48 項離線測試及命令列基本操作通過，包含 POSIX 檔案與目錄權限檢查；尚未驗證 Linux 瀏覽器的完整綁定與實際領獎。Chrome 與其他使用者首次綁定的完整流程也尚未實機驗證。
 
 目前 `capture` 會從 localStorage 取第一枚含 `roleId` 的 `*_roleToken`，**不保證它是本次新綁定或目前帳號的憑證**，也可能讀到過期值。工具尚未實作保存前身份確認或完整帳號隔離。請在專用、乾淨的瀏覽器資料目錄操作，擷取後核對角色資訊。增加 `--wait` 不能解決舊資料被誤選的問題。
 
@@ -23,6 +27,50 @@ git clone https://github.com/MoLinOwO/nsh-tw-web-benefits.git
 cd nsh-tw-web-benefits
 python -m pip install -r requirements.txt
 ```
+
+未安裝 Git 的玩家也可以在 GitHub 選擇 **Code → Download ZIP**，解壓縮後開啟終端機並進入資料夾，略過上述 clone 與 cd 步驟。
+
+### Linux 桌面安裝
+
+下載 repo 後建立虛擬環境並安裝相同依賴：
+
+```bash
+git clone https://github.com/MoLinOwO/nsh-tw-web-benefits.git
+cd nsh-tw-web-benefits
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+```
+
+若已下載 repo，直接在其根目錄執行後兩行。Ubuntu / Debian 若缺少 venv 支援，先依系統套件管理方式安裝 `python3-venv` 再建立環境。
+
+預設 session 路徑為 `${XDG_STATE_HOME:-$HOME/.local/state}/sword-session/sessions.json`。相對的 `XDG_STATE_HOME` 會忽略並退回 `$HOME/.local/state`。POSIX 每次儲存都會將 session 檔設為 `0600`；新建的最末層 store 目錄設為 `0700`，既有目錄權限不會變更。預設路徑變更不會遷移既有自訂 session 檔；若已使用自訂位置（例如先前由 Hermes 工作流程指定的位置），請繼續以 `--store /path/to/your-existing-session.json` 指定該既有路徑。可為不同帳號指定各自的檔案，建議放在 repo 外，例如：
+
+```bash
+sessionFile="$HOME/.local/state/sword-session/account-a.json"
+cdpUrl='http://127.0.0.1:9222'
+```
+
+預設 Edge 設定目錄為 `${XDG_CONFIG_HOME:-$HOME/.config}/microsoft-edge`；相對的 `XDG_CONFIG_HOME` 會忽略並退回 `$HOME/.config`。若想使用獨立瀏覽器資料，按下節選擇 Chrome 或 Edge 並指定專用目錄。
+
+## 玩家快速流程（Linux）
+
+首次綁定需要可操作的 GUI 瀏覽器。先依下一節擇一啟動 Chrome 或 Edge，再於 repo 根目錄執行：
+
+```bash
+.venv/bin/python scripts/sword_session.py --cdp-url "$cdpUrl" --store "$sessionFile" capture vip --wait 300
+```
+
+在開啟的活動頁以自己的帳號登入、完成驗證及角色綁定；完成後核對輸出的身份。接著簽發 official session，先查詢兩站福利，再由玩家明確決定是否執行領取：
+
+```bash
+.venv/bin/python scripts/sword_session.py --store "$sessionFile" mint official --source vip
+.venv/bin/python scripts/sword_session.py --store "$sessionFile" benefits all
+.venv/bin/python scripts/sword_session.py --store "$sessionFile" benefits all --claim
+```
+
+`benefits all` 預設唯讀；`--claim` 才會送出簽到或已符合條件的免費獎勵請求。這些命令是單次執行，不會建立 cron 工作。首次 `capture` 需要 GUI，session 有效後，Linux headless 環境可透過 HTTP 執行 `restore`（不帶 `--browser`）、`status`、`mint` 與 `benefits`，不需 CDP。請先閱讀上方的 [目前狀態與限制](#目前狀態與限制)；成功分支尚未在真實可領獎帳號上驗證，不保證可領資格或遊戲內入帳。
+
+沒有桌面的 Linux 主機可先在自己的桌面電腦完成綁定，再將自己的 session 檔安全移至主機，設為 `0600` 權限，並用 `--store` 指向該檔案。憑證失效後仍需回到可操作瀏覽器的環境重新綁定。
 
 ## 首次綁定或重新擷取
 
@@ -51,6 +99,17 @@ Chrome 若不是安裝在上述位置，也可能位於 `C:\Program Files (x86)\
 
 Chrome 136 起，遠端偵錯旗標必須搭配非預設的 User Data 目錄；上述指令會使用專用目錄，需要在其中重新登入。見 [Chrome 官方說明](https://developer.chrome.com/blog/remote-debugging-port)。
 
+Linux 上可用安裝的 `google-chrome` 執行檔。請確認 9222 空閒，再選 Chrome 或 Edge 其中一個啟動：
+
+```bash
+browserData="$HOME/.local/share/sword-session/chrome-account-a"
+google-chrome --remote-debugging-port=9222 \
+  --user-data-dir="$browserData" \
+  --remote-allow-origins=http://127.0.0.1:9222,http://localhost:9222 &
+```
+
+`--remote-allow-origins` 限定本機來源，不要改為 `*`。該目錄是專用瀏覽器 profile，需要在其中登入。
+
 ### 開啟 Edge 的 9222
 
 Chrome 與 Edge 使用同一個 9222 埠時，請擇一啟動；切換前先關閉占用該埠的偵錯瀏覽器。Edge 指令為：
@@ -65,6 +124,16 @@ Start-Process -FilePath $edge -ArgumentList @(
 ```
 
 Edge 若安裝在 `C:\Program Files\Microsoft\Edge\Application\msedge.exe`，請調整 `$edge`。參考 [Edge 官方 DevTools Protocol 說明](https://learn.microsoft.com/en-us/microsoft-edge/devtools/protocol/)。
+
+Linux 上可改用 `microsoft-edge-stable`，並使用獨立資料目錄：
+
+```bash
+browserData="$HOME/.local/share/sword-session/edge-account-a"
+microsoft-edge-stable --remote-debugging-port=9222 \
+  --user-data-dir="$browserData" &
+```
+
+Chrome 與 Edge 共用 9222，擇一啟動；切換前先關閉目前的偵錯瀏覽器。確認本機 CDP 可用後，依玩家快速流程使用 `--cdp-url http://127.0.0.1:9222` 擷取。Linux 預設 Edge 設定目錄為 `${XDG_CONFIG_HOME:-$HOME/.config}/microsoft-edge`；使用 `--user-data-dir` 時，上例專用目錄會取代該預設值。
 
 ### 確認連線並擷取
 
@@ -171,9 +240,9 @@ python scripts/sword_session.py --store $sessionFile benefits all --claim
 
 有效的 `roleInfoToken` 持有者可重用對應角色的活動登入權限。這不等於已驗證具備整個遊戲帳號的控制權，但仍應將它視為憑證。
 
-同一個 Windows 使用者管理多個帳號時，為每個帳號分別指定 `$browserData` 與 `$sessionFile`；只分開 `--store` 不會隔離瀏覽器。預設 `%LOCALAPPDATA%\sword-session\sessions.json` 是每個 Windows 使用者一份，不是每個遊戲帳號一份。
+同一個 Windows 使用者管理多個帳號時，為每個帳號分別指定 `$browserData` 與 `$sessionFile`；只分開 `--store` 不會隔離瀏覽器。Windows 預設 session 為 `%LOCALAPPDATA%\sword-session\sessions.json`；若 `LOCALAPPDATA` 未設定，退回使用者 home 下的 `AppData/Local`。Linux 預設 session 為 `${XDG_STATE_HOME:-$HOME/.local/state}/sword-session/sessions.json`，Edge 設定目錄為 `${XDG_CONFIG_HOME:-$HOME/.config}/microsoft-edge`；相對 XDG 路徑會忽略。兩平台都是每位 OS 使用者一份，不是每個遊戲帳號一份。同一使用者管理多個遊戲帳號時，為各帳號指定獨立 `--store` 與瀏覽器資料目錄。
 
-session 檔包含明文憑證。程式會嘗試設定檔案 ACL，授權目前使用者、SYSTEM 與 Administrators，但未檢查設定是否成功，不應假設已完成保護或加密。
+session 檔包含明文憑證。POSIX 每次儲存都將檔案設為 `0600`；新建的最末層 store 目錄設為 `0700`，既有目錄權限不變。這不是加密。Windows ACL 設定仍依本機實作狀態處理，不應把 session 當成加密資料。
 
 ## 作為 Skill 使用
 
