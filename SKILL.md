@@ -1,9 +1,9 @@
 ---
 name: swordofjustice-session
-description: 管理逆水寒台服官網會員中心與簽到福利活動的已登入 session。當需要重新取得 VIP 會員中心或「週三小確幸」的登入狀態、恢復既有授權或重新綁定自己的帳號時使用。目前提供登入管理，尚未實作自動簽到或領獎。
+description: 管理逆水寒台服官網會員中心與簽到福利，包括登入 session 擷取與恢復、今日簽到、免費會員禮包及累計登入獎勵領取。當使用者要求查詢或領取自己帳號的官網福利、恢復登入或重新綁定時使用。
 ---
 
-# 逆水寒台服官網福利：登入管理
+# 逆水寒台服官網福利
 
 用 `scripts/sword_session.py` 管理 swordofjustice.com 台服官網會員中心與簽到福利活動頁（vip、official）的已登入 session。Repository 名稱為 nsh-tw-web-benefits，skill 識別名稱為 swordofjustice-session。
 
@@ -35,6 +35,8 @@ python scripts/sword_session.py status                  # 用已保存 session �
 python scripts/sword_session.py list                    # 列出各站 session 與 roleInfoToken 有效期
 python scripts/sword_session.py mint official            # 用已擷取的 roleInfoToken 為另一站簽發
 python scripts/sword_session.py refresh vip              # 失效時重簽，失敗則退回要求手動綁定
+python scripts/sword_session.py benefits all             # 只查簽到與免費獎勵狀態
+python scripts/sword_session.py benefits all --claim     # 有使用者領取授權時執行
 ```
 
 站點 key 只有 `vip`（會員中心）與 `official`（週三小確幸）。以上指令從 skill 根目錄執行，或把腳本路徑換成安裝位置的絕對路徑。
@@ -68,6 +70,19 @@ session = S.build_session("vip", store["vip"]["role_info_token"], None)
 | restore 不帶 --browser、mint、status | 不需要，只需有效的本地憑證 | 不需要 |
 | restore --browser、logout --browser | 需要 | 不需要 |
 | refresh | 重簽成功時不需要；退回 capture 時需要 | 不需要 |
+| benefits（包含 --claim） | 不需要，只需已保存的有效 session | 不需要 |
+
+## 簽到與免費領獎
+
+先用 benefits all 查詢；使用者已要求簽到或領取時，可以接續 benefits all --claim，不必為同一批已授權的免費項目再次確認。單純問狀態或還沒授權領取時只查詢。
+
+範圍限於 official 的今日簽到，以及 vip 的日／週／月／賽季禮包、可補領差額與累計登入獎勵。根據伺服器狀態選擇可領項目，已完成與未達條件的跳過，不修改資格或時間。
+
+工具會先驗證所有所選站點的帳號、角色、伺服器、活動及回應格式，再開始操作；all 模式身份混用會拒絕。每項領取前後都查狀態，POST 只送一次。逾時、格式改變、網站拒絕或結果不明時停止並報告，不能重試同一項、切換另一個帳號的 token，或改用瀏覽器再次點擊以規避結果不明。
+
+若登入失效，回到手動綁定／恢復流程。單次最多支援 32 項，沒有自動排程。成功回報需區分「本次完成」、「原本已完成」與「未達條件」；不能把 mock 測試或跳過項目說成實際領獎成功。
+
+2026-10-26 本機帳號的今日簽到與可解鎖會員獎勵已完成，因此當日只驗證了實機查詢及跳過分支；可領取時的寫入與驗證流程以 mock 測試覆蓋。具體 API 見 [references/protocol.md](references/protocol.md#免費福利-api)。
 
 ## 重新擷取與目前限制
 
@@ -118,8 +133,7 @@ python scripts/sword_session.py --edge-udd 'D:\SwordProfiles\user-a' --store 'D:
 ## 驗證
 
 ```powershell
-cd scripts
-python -m unittest test_sword_session -v
+python -m unittest discover -s scripts -p 'test_*.py' -v
 ```
 
 單元測試不需網路，涵蓋 JWT 解析、來源選擇、指令註冊與 cookie 名稱等不變量。改動腳本後必須跑一次。

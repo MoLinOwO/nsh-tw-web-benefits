@@ -52,6 +52,7 @@ API = "https://api.swordofjustice.com"
 MINT_PATH = "/public/nshm/common_activity_auth/web/login/account"
 LOGOUT_PATH = "/public/nshm/common_activity_auth/logout/account"
 ACCOUNT_COOKIE = "nshmhmt_common_h5_account_token"
+LOGIN_INFO_PATH = "/public/nshm/common_activity_auth/login/info/account"
 ROLE_COOKIE = "gdxidpyhxdE"
 DEFAULT_EDGE_UDD = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Edge" / "User Data"
 DEFAULT_STORE = Path(os.environ.get("LOCALAPPDATA", "")) / "sword-session" / "sessions.json"
@@ -524,6 +525,153 @@ def cmd_list(args) -> int:
     return 0
 
 
+def activity_request(site_key: str, session: dict, method: str, path: str,
+                     payload: dict | None = None) -> dict:
+    """One HTTP attempt; never replay a possibly completed claim."""
+    site = SITES[site_key]
+    base = API if path == LOGIN_INFO_PATH else site["api_base"]
+    headers = {"Origin": "https://www.swordofjustice.com", "Referer": site["page"],
+               "Cookie": f"{ACCOUNT_COOKIE}={session['account_token']}",
+               "Accept": "application/json", **site["headers"]}
+    try:
+        response = requests.request(method, base + path, headers=headers, json=payload,
+                                    timeout=20, allow_redirects=False)
+        if response.status_code != 200:
+            raise ValueError(f"HTTP {response.status_code}")
+        body = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        hint = "；操作結果未確認，先查狀態，勿直接重送" if method == "POST" else ""
+        raise RuntimeError(f"{method} {path} 請求失敗（{type(exc).__name__}）{hint}") from exc
+    if not isinstance(body, dict) or type(body.get("code")) is not int or body["code"] != 0:
+        code = body.get("code") if isinstance(body, dict) else "?"
+        raise RuntimeError(f"{path} 被網站拒絕，code={code}；請檢查登入或手動驗證")
+    if method == "POST":
+        return body["data"] if isinstance(body.get("data"), dict) else {}
+    if not isinstance(body.get("data"), dict):
+        raise RuntimeError(f"{path} 回應格式改變，停止操作")
+    return body["data"]
+
+
+def verify_benefit_identity(site_key: str, session: dict) -> None:
+    for field in ("account_token", "aid", "role_id", "server_id"):
+        if not session.get(field):
+            raise RuntimeError(f"{site_key} 缺少 {field}，請先完成綁定")
+    info = activity_request(site_key, session, "GET", LOGIN_INFO_PATH)
+    extra = info.get("channelExtra")
+    if not isinstance(extra, dict):
+        raise RuntimeError(f"{site_key} 身份資料格式改變，停止操作")
+    if (str(info.get("aid")) != str(session["aid"])
+            or str(extra.get("roleId")) != str(session["role_id"])
+            or str(extra.get("serverId")) != str(session["server_id"])
+            or info.get("activityName") != SITES[site_key]["activity"]):
+        raise RuntimeError(f"{site_key} 帳號、角色、伺服器或活動不符，停止操作")
+
+
+def benefit_snapshot(site_key: str, session: dict) -> dict:
+    path = "/activity/home-page" if site_key == "vip" else "/user/info"
+    data = activity_request(site_key, session, "GET", path)
+    if site_key == "official" and (
+            str(data.get("role_id")) != str(session["role_id"])
+            or str(data.get("server_id")) != str(session["server_id"])):
+        raise RuntimeError("簽到狀態的角色或伺服器不符，停止操作")
+    return data
+
+
+def benefit_items(site_key: str, data: dict) -> list[dict]:
+    """Plan only documented free gifts, login milestones and today's check-in."""
+    if not isinstance(data, dict):
+        raise RuntimeError("福利狀態格式改變，停止操作")
+    if site_key == "official":
+        if type(data.get("signed_today")) is not bool:
+            raise RuntimeError("signed_today 格式改變，停止操作")
+        return [{"kind": "checkin", "id": 0, "label": "今日簽到",
+                 "state": "already" if data["signed_today"] else "available"}]
+    items = []
+    for field, kind, id_key in (("benefits", "gift", "gift_type"),
+                                ("milestones", "milestone", "login_count")):
+        rows = data.get(field)
+        if not isinstance(rows, list):
+            raise RuntimeError(f"{field} 格式改變，停止操作")
+        seen = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                raise RuntimeError(f"{field} 項目格式改變，停止操作")
+            item_id, status = row.get(id_key), row.get("status")
+            allowed_status = (1, 2, 3, 4) if kind == "gift" else (1, 2, 3)
+            if (type(item_id) is not int or item_id <= 0 or item_id in seen
+                    or (kind == "gift" and item_id not in (1, 2, 3, 4))
+                    or type(status) is not int or status not in allowed_status):
+                raise RuntimeError(f"{field} ID 或狀態未知，停止操作")
+            seen.add(item_id)
+            label = row.get("gift_name") if kind == "gift" else f"登入 {item_id} 天獎勵"
+            items.append({"kind": kind, "id": item_id,
+                          "label": label or f"禮包 {item_id}",
+                          "state": {1: "locked", 2: "available", 3: "already", 4: "available"}[status]})
+    # ponytail: 單次最多 32 項；網站擴充獎勵種類時先檢查前端與 API 契約再調整。
+    if len(items) > 32:
+        raise RuntimeError("獎勵數量超出已支援範圍，停止操作")
+    return items
+
+
+def execute_benefits(site_key: str, session: dict, items: list[dict], claim: bool = False) -> list[dict]:
+    results = []
+    for item in items:
+        result = dict(item)
+        if claim and item["state"] == "available":
+            # Recheck before each write: another tab may already have claimed it.
+            fresh = benefit_items(site_key, benefit_snapshot(site_key, session))
+            current = next((x for x in fresh if (x["kind"], x["id"]) == (item["kind"], item["id"])), None)
+            if not current:
+                raise RuntimeError("獎勵項目已改變，停止操作")
+            result = dict(current)
+            if current["state"] == "available":
+                if item["kind"] == "checkin":
+                    path, payload = "/checkin/do", None
+                elif item["kind"] == "gift":
+                    path, payload = "/activity/claim-gift-pack", {"gift_type": item["id"]}
+                elif item["kind"] == "milestone":
+                    path, payload = "/activity/claim-milestone", {"login_count": item["id"]}
+                else:
+                    raise RuntimeError("不支援的獎勵種類，停止操作")
+                activity_request(site_key, session, "POST", path, payload)
+                after = benefit_items(site_key, benefit_snapshot(site_key, session))
+                verified = next((x for x in after if (x["kind"], x["id"]) == (item["kind"], item["id"])), None)
+                if not verified or verified["state"] != "already":
+                    raise RuntimeError("網站尚未確認已領取；先查狀態，勿直接重送")
+                result["state"] = "claimed"
+                print(f"  已完成並確認：{result['label']}")
+        results.append(result)
+    return results
+
+
+def cmd_benefits(args) -> int:
+    store = load_store(args.store)
+    keys = list(SITES) if args.site == "all" else [args.site]
+    try:
+        if any(not isinstance(store.get(k), dict) for k in keys):
+            raise RuntimeError("所選站點缺少有效 session，請先 capture 或 mint")
+        identities = {(str(store[k].get("aid")), str(store[k].get("role_id")),
+                       str(store[k].get("server_id"))) for k in keys if k in store}
+        if len(identities) > 1:
+            raise RuntimeError("同一份 store 的兩站身份不同，請分開帳號資料")
+        prepared = []
+        # Verify every selected identity and schema before the first write.
+        for key in keys:
+            if key not in store:
+                raise RuntimeError(f"{key} 尚無 session，請先 capture 或 mint")
+            verify_benefit_identity(key, store[key])
+            prepared.append((key, benefit_items(key, benefit_snapshot(key, store[key]))))
+        labels = {"locked": "未達條件", "available": "可領取", "already": "已完成", "claimed": "本次完成"}
+        for key, items in prepared:
+            print(f"== {SITES[key]['label']}：{'執行' if args.claim else '只查詢'} ==")
+            for item in execute_benefits(key, store[key], items, args.claim):
+                print(f"  {item['label']}：{labels[item['state']]}")
+        return 0
+    except RuntimeError as exc:
+        print(f"停止：{exc}")
+        return 1
+
+
 def cmd_restore(args) -> int:
     """Rebuild a logged-in browser session from a stored roleInfoToken.
 
@@ -670,6 +818,11 @@ def main(argv=None) -> int:
     out.add_argument("--browser", action="store_true",
                      help="同時清除瀏覽器 Cookie 與 localStorage 角色 token")
     out.set_defaults(func=cmd_logout)
+
+    benefits = sub.add_parser("benefits", help="查詢免費簽到與會員獎勵；加 --claim 才執行")
+    benefits.add_argument("site", choices=["all", *sorted(SITES)])
+    benefits.add_argument("--claim", action="store_true", help="簽到並領取已達條件的免費獎勵，逐項確認、不重送")
+    benefits.set_defaults(func=cmd_benefits)
 
     args = parser.parse_args(argv)
     return args.func(args)

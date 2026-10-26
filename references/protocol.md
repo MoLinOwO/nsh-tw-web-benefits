@@ -105,3 +105,25 @@ Chromium 的固定埠模式不應依賴 DevToolsActivePort 檔案：目前[上�
 此 skill 不需要 Chrome DevTools MCP。scripts/sword_session.py 自己實作最小 CDP 客戶端（websocket-client）。capture、帶 --browser 的操作，以及 refresh 退回 capture 時都需要 CDP；restore 不帶 --browser、mint、status 走 HTTP。
 
 外部的 MCP 工具（例如用來在頁面上點擊或檢視渲染結果）可以輔助驗證，但不是必要條件。
+
+## 免費福利 API
+
+2026-10-26 核對網站公開前端：VIP 的 [html0.0f3caa44.js](https://www.swordofjustice.com/pc/zt/20260421095635/static/js/html0.0f3caa44.js) 與 [pages-index-index.5df662ca.js](https://www.swordofjustice.com/pc/zt/20260421095635/static/js/pages-index-index.5df662ca.js)，official 的 [html0.874c9be2.js](https://www.swordofjustice.com/pc/zt/20260714074625/static/js/html0.874c9be2.js)（模組 3da3）與 [pages-index-index.51b29b76.js](https://www.swordofjustice.com/pc/zt/20260714074625/static/js/pages-index-index.51b29b76.js)。檔名含版本雜湊，網站更新後需重新核對。
+
+先以 account cookie 呼叫前述 login/info/account，核對 data.aid、activityName 及 channelExtra.roleId / serverId 與保存資料相符。福利程式使用 SITES 內固定的 API host，不採用 session 檔內的自訂 api_base。
+
+| 站點 | 方法／路徑（接在該站 api base 後） | 參數／狀態 |
+|---|---|---|
+| official | GET /user/info | signed_today 為布林值；role_id、server_id 需與身份一致 |
+| official | POST /checkin/do | 前端不傳 body；signed_today=false 時才執行 |
+| vip | GET /activity/home-page | benefits 與 milestones 提供領取狀態 |
+| vip | POST /activity/claim-gift-pack | JSON：gift_type，允許 1（日）、2（週）、3（月）、4（賽季） |
+| vip | POST /activity/claim-milestone | JSON：login_count，取伺服器目前可領取項目的天數 |
+
+VIP 前端常數：禮包 status=1 未解鎖、2 可領、3 已領、4 可補領差額；里程碑 status=1 未達成、2 可領、3 已領。未知值或重複 ID 會使工具停止，不猜測資格。補領差額與一般領取使用同一個 claim-gift-pack 端點。
+
+官方簽到頁與 VIP 寫入都帶 account cookie、Origin、Referer，official 另帶 area:hmt。回應 code=0 後重新讀狀態，需確認該項為已完成才回報成功；POST 回應的 data 可以為空，不作為唯一成功依據。
+
+領取前會再讀一次該項狀態，避免另一分頁已完成。一次操作不自動重送，不跟隨重導向；POST 逾時或後續狀態未確認時，先唯讀查詢結果。這並非跨程序的原子鎖，仍應避免對同一帳號平行執行多個領取程序。
+
+本機帳號實查 signed_today=true，VIP 日、週禮包與所有登入里程碑為已完成，月、賽季禮包未達條件。因此當日沒有可驗證的新獎勵寫入；自動領取分支以 mock 測試驗證。

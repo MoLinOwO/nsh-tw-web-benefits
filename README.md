@@ -1,6 +1,6 @@
 # 逆水寒台服官網福利工具
 
-`nsh-tw-web-benefits` 面向《逆水寒》台服官網的會員中心、簽到與福利活動。目前提供 Python 登入 session 擷取、重用與恢復，以及可供 Codex 等代理讀取的 `SKILL.md`；尚未實作自動簽到或領獎。
+`nsh-tw-web-benefits` 面向《逆水寒》台服官網的會員中心、簽到與福利活動。提供 Python 登入 session 擷取、重用與恢復、免費簽到與會員獎勵領取，以及可供 Codex 等代理讀取的 `SKILL.md`。
 
 支援 [VIP 會員中心](https://www.swordofjustice.com/h5/20260424/vip/index.html#/) 與 [週三小確幸](https://www.swordofjustice.com/h5/20260722/officialwebfasthmt/#/)。
 
@@ -119,6 +119,33 @@ python scripts/sword_session.py --cdp-url $cdpUrl --store $sessionFile restore o
 
 角色憑證過期或被伺服器拒絕時，需要重新手動綁定及 `capture`。不要反覆重試簽發，也不要為了重綁而清除整個日常瀏覽器的 cookie。
 
+## 自動簽到與免費領獎
+
+使用已保存的 session 即可，不需要瀏覽器、CDP 或 MCP。預設只查狀態：
+
+```powershell
+python scripts/sword_session.py --store $sessionFile benefits all
+```
+
+加上 `--claim` 才會執行簽到與領獎，也可將 all 換成 vip 或 official：
+
+```powershell
+python scripts/sword_session.py --store $sessionFile benefits all --claim
+```
+
+支援項目：
+
+- 週三小確幸：今日簽到；網站回傳 `signed_today=true` 時跳過。
+- VIP 會員中心：已解鎖的日、週、月、賽季禮包、可補領差額，以及可領取的累計登入天數獎勵。
+
+已領取與未達條件的項目會顯示狀態並跳過。此指令只處理上述免費項目，且是單次執行，不會自動設定排程。
+
+每次執行先向網站核對 aid、角色、伺服器與活動。選擇 all 時，兩站必須是相同帳號與角色，且兩站的身份及狀態格式都確認通過後才開始領取；這項檢查不代表 capture 已具有保存前身份確認功能。
+
+每個可領項目在送出前會重新查一次狀態，成功後再查是否已標記完成。一次 POST 失敗、逾時、要求重新驗證或後續狀態無法確認時會停止，不自動重送；重新執行前請先用不帶 --claim 的指令查詢狀態。網站標記已領取與遊戲信箱實際入帳是不同層次，後者需在遊戲內確認。
+
+2026-10-26 的實機查詢顯示，原開發帳號的今日簽到、日／週禮包及登入里程碑已完成，其他禮包未達條件。當日沒有可新增領取的項目；實機驗證涵蓋查詢及跳過，實際可領取分支以 mock 回歸測試驗證，不能宣稱已成功發送新獎勵。
+
 ## 指令參考
 
 全域參數 `--store`、`--cdp-url` 與 `--edge-udd` 放在子指令之前。使用 --cdp-url 時，工具直接連該位址，不會核對它是否屬於 --edge-udd 所指的目錄。
@@ -132,6 +159,8 @@ python scripts/sword_session.py --cdp-url $cdpUrl --store $sessionFile restore o
 | `refresh vip` | 嘗試重簽，失敗或過期時退回 capture | 退回 capture 時需要 |
 | `status` | 呼叫兩站首頁 API 檢查 session | 否 |
 | `list` | 顯示保存的身份、時間與憑證到期資訊 | 否 |
+| `benefits all` | 只查簽到與免費會員獎勵狀態 | 否 |
+| `benefits all --claim` | 執行符合條件的免費簽到／領獎 | 否 |
 | `logout vip --browser` | 呼叫登出 API 並清除部分頁面登入資料 | 是 |
 
 `logout --browser` 會影響 `.swordofjustice.com` 共用的活動 cookie，並移除該網頁 origin 下符合 `roleToken` / `loginAid` 的 localStorage key，可能影響同源的其他活動。它不會完整清除 UniSDK 登入，不能當成完整的帳號切換工具。
@@ -158,7 +187,7 @@ session 檔包含明文憑證。程式會嘗試設定檔案 ACL，授權目前�
 python -m unittest discover -s scripts -p 'test_*.py' -v
 ```
 
-現有 28 項測試使用假資料與 mock，不會呼叫網站或修改瀏覽器；包含指定 CDP 位址及既有 port 檔案的連線探索測試。測試通過不代表 Chrome 或新使用者的首次綁定已通過實機驗證。
+測試使用假資料與 mock，不會呼叫網站或修改瀏覽器；涵蓋 CDP 位址探索、身份核對、已完成項目跳過、符合條件時的領取參數、領取後驗證，以及失敗不重送。測試通過不代表 Chrome 或新使用者的首次綁定已通過實機驗證，也不代表遊戲內實際收到獎勵。
 
 ## 連線排查
 
