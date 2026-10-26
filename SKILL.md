@@ -1,11 +1,11 @@
 ---
 name: swordofjustice-session
-description: 擷取、重用與恢復 swordofjustice.com（逆水寒 H5 活動頁）的已登入 session。當需要重新取得 VIP 會員中心或「週三小確幸」的登入狀態、登出後要免驗證恢復、或替使用者自己的帳號重簽 token 時使用。不適用於其他遊戲或網站的登入處理。
+description: 管理逆水寒台服官網會員中心與簽到福利活動的已登入 session。當需要重新取得 VIP 會員中心或「週三小確幸」的登入狀態、恢復既有授權或重新綁定自己的帳號時使用。目前提供登入管理，尚未實作自動簽到或領獎。
 ---
 
-# Swordofjustice Session
+# 逆水寒台服官網福利：登入管理
 
-用 `scripts/sword_session.py` 管理 swordofjustice.com H5 活動頁（vip、official）的已登入 session。
+用 `scripts/sword_session.py` 管理 swordofjustice.com 台服官網會員中心與簽到福利活動頁（vip、official）的已登入 session。Repository 名稱為 nsh-tw-web-benefits，skill 識別名稱為 swordofjustice-session。
 
 ## 適用範圍
 

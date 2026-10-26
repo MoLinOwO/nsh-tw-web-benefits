@@ -1,6 +1,6 @@
-# Swordofjustice Session
+# 逆水寒台服官網福利工具
 
-用 Python 擷取及重用自己帳號在《逆水寒》H5 活動頁完成手動登入、驗證與角色綁定後的 session，並提供可供 Codex 等代理讀取的 `SKILL.md`。
+`nsh-tw-web-benefits` 面向《逆水寒》台服官網的會員中心、簽到與福利活動。目前提供 Python 登入 session 擷取、重用與恢復，以及可供 Codex 等代理讀取的 `SKILL.md`；尚未實作自動簽到或領獎。
 
 支援 [VIP 會員中心](https://www.swordofjustice.com/h5/20260424/vip/index.html#/) 與 [週三小確幸](https://www.swordofjustice.com/h5/20260722/officialwebfasthmt/#/)。
 
@@ -19,8 +19,8 @@
 需要 Python 3.10 以上、Git，以及可使用遠端偵錯的 Google Chrome 或 Microsoft Edge。以下以 Windows PowerShell 為例：
 
 ```powershell
-git clone https://github.com/MoLinOwO/swordofjustice-session.git
-cd swordofjustice-session
+git clone https://github.com/MoLinOwO/nsh-tw-web-benefits.git
+cd nsh-tw-web-benefits
 python -m pip install -r requirements.txt
 ```
 

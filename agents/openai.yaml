@@ -1,4 +1,4 @@
 interface:
-  display_name: "Swordofjustice Session"
-  short_description: "擷取與恢復逆水寒 H5 活動頁的已登入 session"
+  display_name: "逆水寒台服官網福利"
+  short_description: "逆水寒台服官網會員中心與簽到福利活動的登入 session 管理"
   default_prompt: "Use $swordofjustice-session to restore the logged-in session for the vip or official activity page."
