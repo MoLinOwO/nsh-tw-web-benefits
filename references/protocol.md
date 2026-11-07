@@ -141,6 +141,8 @@ VIP 前端常數：禮包 status=1 未解鎖、2 可領、3 已領、4 可補領
 | GET /activity-status?location=hmt | phase、booked、role_bound |
 | GET /user-info?lang=zh_hant | is_bound、role_name、server_name、user_type；不依賴此處提供角色 ID |
 | GET /ccc-task/list | task_groups；各組 tab_id、locked、ended、tasks |
+| GET /news/info?lang=zh_hant | daily：title、content、image_url、link_url；先讀取並輸出當日爆料 |
+| POST /ccc-task/complete | 僅 JSON task_id=1001（view_today_leak）；讀取爆料後才回報完成 |
 | POST /ccc-task/receive | JSON task_id；只領 task_status=2 的已完成任務 |
 | GET /personal-milestone-list | completion_count、milestones；每項 milestone_id、claim_status、locked、ended |
 | POST /personal-milestone-claim | JSON milestone_id；只領 claim_status=2 且已解鎖的項目 |
@@ -151,6 +153,8 @@ VIP 前端常數：禮包 status=1 未解鎖、2 可領、3 已領、4 可補領
 
 遵循前端階段限制：tab=1 在 phase=2/3/6 可領；tab=2/3 在 phase=3/4 可領；個人里程碑在 phase=3/4 可領。2027-01-02 起只保留伺服器容許的既有獎勵，不完成新任務；2027-01-16 起由本地截止檢查在 HTTP/CDP 之前阻擋該活動。每次 POST 前都重新檢查期限。
 
-未實作 appointment/submit、team/create、team/enter、team/claim、ccc-task/complete、抽獎投入或手機綁定。team/claim 的前端會要求首次領取者確認不能退出／解散隊伍，與一般免費任務領獎不同。
+每日爆料 task_id=1001、task_key=view_today_leak、task_type=daily、tab_id=1，依官方設定表核對。只在 --claim、phase=2/6、組與項目未鎖定且未結束、status=1 時讀取新聞，寫入前再次查任務；完成後須確認 status=2/3 才進入既有領獎流程。status=2 直接領取，status=3 跳過。沒有當日新聞不回報完成。預熱任務本地完成截止為 2026-11-27 10:00+08:00（exclusive）；讀取後、完成前重新檢查截止與台北日期，領取每日獎勵前也檢查未跨日。每日獎勵不跨日保留。POST 失敗或未確認完成即停止，沒有重試或自動改用瀏覽器。
 
-已用既有角色憑證簽發新活動 session 並通過共用 account info 的身份核對，唯讀驗證 raw snake_case 回應。當日 phase=6、預熱任務均 task_status=3，其他組與里程碑鎖定；沒有新的實機 POST 領獎成功紀錄。
+未實作 appointment/submit、team/create、team/enter、team/claim、其他任務的 complete、抽獎投入或手機綁定。team/claim 的前端會要求首次領取者確認不能退出／解散隊伍，與一般免費任務領獎不同。
+
+已用既有角色憑證簽發新活動 session 並通過共用 account info 的身份核對，唯讀驗證 raw snake_case 任務與 daily 新聞回應，確認已領時不寫入。當日 phase=6、預熱任務均 task_status=3，其他組與里程碑鎖定；沒有新的實機 POST 領獎成功紀錄，完成與領取流程以離線回歸測試驗證。

@@ -35,7 +35,7 @@ import sys
 import threading
 import time
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 try:
@@ -103,6 +103,7 @@ SITES = {
         # 規則沒有明示時區：工具按台北時間設本地上限，另尊重伺服器 phase。
         # 上限採不含該時刻，包含規則最後一分鐘的全部秒數。
         "starts_at": "2026-10-30T08:00:00+08:00",
+        "daily_reveal_end_at": "2026-11-27T10:00:00+08:00",
         "tasks_end_at": "2027-01-02T00:00:00+08:00",
         "expires_at": "2027-01-16T00:00:00+08:00",
     },
@@ -669,7 +670,10 @@ def anniversary_items(data: dict) -> list[dict]:
         if state == "available" and (not unlocked or locked):
             state = "locked"
         label = f"活動任務 {item_id}" if kind == "event_task" else f"週年個人里程碑 {item_id}"
-        items.append({"kind": kind, "id": item_id, "label": label, "state": state})
+        item = {"kind": kind, "id": item_id, "label": label, "state": state}
+        if kind == "event_task" and item_id == 1001:
+            item["label"] = "查看今日爆料"
+        items.append(item)
 
     groups, milestones = data.get("task_groups"), data.get("milestones")
     if not isinstance(groups, list) or not isinstance(milestones, list):
@@ -684,9 +688,14 @@ def anniversary_items(data: dict) -> list[dict]:
         allowed = phase in ((2, 3, 6) if tab == 1 else (3, 4))
         for row in group["tasks"]:
             add(row, "event_task", "task_id", "task_status", allowed and not locked and not ended)
+            if (row["task_id"] == 1001 and tab == 1 and phase in (2, 6)
+                    and row.get("task_type") == "daily" and row["task_status"] == 1
+                    and not locked and not ended and not row.get("locked", False)
+                    and not row.get("ended", False)):
+                items[-1]["can_complete"] = True
     for row in milestones:
         add(row, "event_milestone", "milestone_id", "claim_status", phase in (3, 4))
-    # ponytail: 本活動最多支援 32 個已完成獎勵，不自動完成任務、組隊或消耗抽獎券。
+    # ponytail: 最多 32 項；僅自動完成每日爆料 1001，新任務須重新核對官方契約。
     if len(items) > 32:
         raise RuntimeError("臨時獎勵數量超出支援範圍")
     return items
@@ -730,7 +739,60 @@ def benefit_items(site_key: str, data: dict) -> list[dict]:
     return items
 
 
+def daily_reveal_day() -> str:
+    return datetime.fromtimestamp(time.time(), timezone(timedelta(hours=8))).date().isoformat()
+
+
+def require_daily_reveal_day(day: str, completing: bool = False) -> None:
+    require_active_site("anniversary2026")
+    if daily_reveal_day() != day:
+        raise RuntimeError("每日爆料操作已跨日，請重新查詢後再執行")
+    if completing and time.time() >= datetime.fromisoformat(
+            SITES["anniversary2026"]["daily_reveal_end_at"]).timestamp():
+        raise RuntimeError("每日爆料預熱任務已截止，不再回報完成")
+
+
+def complete_daily_reveal(session: dict, items: list[dict]) -> list[dict]:
+    """Read the same daily news the official detail dialog displays, then complete 1001."""
+    site_key = "anniversary2026"
+    day = daily_reveal_day()
+    cutoff = datetime.fromisoformat(SITES[site_key]["daily_reveal_end_at"]).timestamp()
+    if time.time() >= cutoff:
+        print("  查看今日爆料：預熱任務已截止，跳過完成。")
+        return items
+    fresh = benefit_items(site_key, benefit_snapshot(site_key, session))
+    if not any(x.get("can_complete") for x in fresh):
+        return fresh
+    news = activity_request(site_key, session, "GET", "/news/info?lang=zh_hant").get("daily")
+    if news is None or news == {}:
+        print("  查看今日爆料：今日內容尚未公布，跳過完成。")
+        return fresh
+    if (not isinstance(news, dict) or not isinstance(news.get("title"), str)
+            or not news["title"].strip() or not isinstance(news.get("content"), str)
+            or any(not isinstance(news.get(k, ""), str) for k in ("image_url", "link_url"))):
+        raise RuntimeError("今日爆料格式改變，停止回報完成")
+    print(f"  今日爆料：{news['title']}\n{news['content']}")
+    for key in ("image_url", "link_url"):
+        if news.get(key):
+            print(f"  {key}：{news[key]}")
+    # Another tab may have completed or claimed it while the news was loading.
+    fresh = benefit_items(site_key, benefit_snapshot(site_key, session))
+    require_daily_reveal_day(day, completing=True)
+    if not any(x.get("can_complete") for x in fresh):
+        return fresh
+    activity_request(site_key, session, "POST", "/ccc-task/complete", {"task_id": 1001})
+    fresh = benefit_items(site_key, benefit_snapshot(site_key, session))
+    current = next((x for x in fresh if x["kind"] == "event_task" and x["id"] == 1001), None)
+    if not current or current["state"] not in ("available", "already"):
+        raise RuntimeError("網站尚未確認爆料任務完成；先查狀態，勿直接重送")
+    print("  查看今日爆料：已確認任務完成。")
+    return fresh
+
+
 def execute_benefits(site_key: str, session: dict, items: list[dict], claim: bool = False) -> list[dict]:
+    reveal_day = daily_reveal_day() if site_key == "anniversary2026" else None
+    if claim and site_key == "anniversary2026" and any(x.get("can_complete") for x in items):
+        items = complete_daily_reveal(session, items)
     results = []
     for item in items:
         result = dict(item)
@@ -754,8 +816,12 @@ def execute_benefits(site_key: str, session: dict, items: list[dict], claim: boo
                     path, payload = "/personal-milestone-claim", {"milestone_id": item["id"]}
                 else:
                     raise RuntimeError("不支援的獎勵種類，停止操作")
+                if site_key == "anniversary2026" and item["kind"] == "event_task" and item["id"] == 1001:
+                    require_daily_reveal_day(reveal_day)
                 activity_request(site_key, session, "POST", path, payload)
                 after = benefit_items(site_key, benefit_snapshot(site_key, session))
+                if site_key == "anniversary2026" and item["kind"] == "event_task" and item["id"] == 1001:
+                    require_daily_reveal_day(reveal_day)
                 verified = next((x for x in after if (x["kind"], x["id"]) == (item["kind"], item["id"])), None)
                 if not verified or verified["state"] != "already":
                     raise RuntimeError("網站尚未確認已領取；先查狀態，勿直接重送")
@@ -950,7 +1016,7 @@ def main(argv=None) -> int:
 
     benefits = sub.add_parser("benefits", help="查詢免費簽到與會員獎勵；加 --claim 才執行")
     benefits.add_argument("site", choices=["all", *sorted(SITES)])
-    benefits.add_argument("--claim", action="store_true", help="簽到並領取已達條件的免費獎勵，逐項確認、不重送")
+    benefits.add_argument("--claim", action="store_true", help="簽到、查看每日爆料並領免費獎勵，逐項確認、不重送")
     benefits.set_defaults(func=cmd_benefits)
 
     args = parser.parse_args(argv)
