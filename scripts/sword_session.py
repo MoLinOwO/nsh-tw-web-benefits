@@ -35,6 +35,7 @@ import sys
 import threading
 import time
 import urllib.parse
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -92,7 +93,36 @@ SITES = {
         # ponytail: 這個站點的 API 強制要求 area header，缺了會回 code 20002。
         "headers": {"area": "hmt"},
     },
+    "anniversary2026": {
+        "label": "二週年預約／任務獎勵（臨時）",
+        "page": "https://www.swordofjustice.com/h5/20261030/yyhdzh-cht/#/",
+        "activity": "nshhmt_yyhd_20261030",
+        "api_base": API + "/nshm-nshhmt-yyhd-20261030",
+        "probe": "/user-info?lang=zh_hant",
+        "headers": {},
+        # 規則沒有明示時區：工具按台北時間設本地上限，另尊重伺服器 phase。
+        # 上限採不含該時刻，包含規則最後一分鐘的全部秒數。
+        "starts_at": "2026-10-30T08:00:00+08:00",
+        "tasks_end_at": "2027-01-02T00:00:00+08:00",
+        "expires_at": "2027-01-16T00:00:00+08:00",
+    },
 }
+
+
+def site_window_state(site_key: str, now: float | None = None) -> str:
+    site = SITES[site_key]
+    current = time.time() if now is None else now
+    if site.get("starts_at") and current < datetime.fromisoformat(site["starts_at"]).timestamp():
+        return "not_started"
+    if site.get("expires_at") and current >= datetime.fromisoformat(site["expires_at"]).timestamp():
+        return "expired"
+    return "active"
+
+
+def require_active_site(site_key: str) -> None:
+    state = site_window_state(site_key)
+    if state != "active":
+        raise RuntimeError(f"{SITES[site_key]['label']} {'尚未開始' if state == 'not_started' else '領獎期限已結束'}，停止連線與操作")
 
 
 def mask(value: str, keep: int = 8) -> str:
@@ -372,6 +402,7 @@ def save_store(path: Path, store: dict) -> None:
 
 
 def build_session(site_key: str, role_info_token: str, role_cookie: str | None) -> dict:
+    require_active_site(site_key)
     site = SITES[site_key]
     print(f"  以 roleInfoToken 為 {site['label']} 簽發專屬 token ...")
     minted = mint_account_token(role_info_token, site["activity"], site["page"])
@@ -401,6 +432,7 @@ def build_session(site_key: str, role_info_token: str, role_cookie: str | None) 
 
 
 def cmd_capture(args) -> int:
+    require_active_site(args.site)
     site = SITES[args.site]
     print(f"== capture {site['label']} ==")
     cdp = Cdp(browser_ws(args.edge_udd, args.cdp_url))
@@ -436,6 +468,9 @@ def cmd_status(args) -> int:
     for key, session in store.items():
         site = SITES.get(key, {})
         print(f"== {session.get('label', key)} ==")
+        if key in SITES and site_window_state(key) != "active":
+            print("  臨時活動尚未開始或已到期，跳過連線。")
+            continue
         rit = session.get("role_info_token")
         if rit and jwt_expired(rit):
             print("  roleInfoToken 已過期，需要重新 capture。")
@@ -545,6 +580,7 @@ def cmd_list(args) -> int:
 def activity_request(site_key: str, session: dict, method: str, path: str,
                      payload: dict | None = None) -> dict:
     """One HTTP attempt; never replay a possibly completed claim."""
+    require_active_site(site_key)
     site = SITES[site_key]
     base = API if path == LOGIN_INFO_PATH else site["api_base"]
     headers = {"Origin": "https://www.swordofjustice.com", "Referer": site["page"],
@@ -585,6 +621,19 @@ def verify_benefit_identity(site_key: str, session: dict) -> None:
 
 
 def benefit_snapshot(site_key: str, session: dict) -> dict:
+    if site_key == "anniversary2026":
+        status = activity_request(site_key, session, "GET", "/activity-status?location=hmt")
+        phase = status.get("phase")
+        if type(phase) is not int or phase not in (1, 2, 3, 4, 5, 6):
+            raise RuntimeError("臨時活動 phase 未知，停止操作")
+        if phase in (1, 5):
+            return {"phase": phase, "task_groups": [], "milestones": []}
+        if status.get("role_bound") is not True:
+            raise RuntimeError("請先在二週年活動頁手動完成角色綁定")
+        tasks = activity_request(site_key, session, "GET", "/ccc-task/list")
+        milestones = activity_request(site_key, session, "GET", "/personal-milestone-list")
+        return {"phase": phase, "task_groups": tasks.get("task_groups"),
+                "milestones": milestones.get("milestones")}
     path = "/activity/home-page" if site_key == "vip" else "/user/info"
     data = activity_request(site_key, session, "GET", path)
     if site_key == "official" and (
@@ -594,10 +643,61 @@ def benefit_snapshot(site_key: str, session: dict) -> dict:
     return data
 
 
+def anniversary_items(data: dict) -> list[dict]:
+    phase = data.get("phase")
+    if type(phase) is not int or phase not in (1, 2, 3, 4, 5, 6):
+        raise RuntimeError("臨時活動 phase 未知，停止操作")
+    if phase in (1, 5):
+        return [{"kind": "event", "id": 0, "label": "活動開放狀態",
+                 "state": "locked" if phase == 1 else "ended"}]
+    items, seen = [], set()
+
+    def add(row, kind, id_field, status_field, unlocked):
+        if not isinstance(row, dict):
+            raise RuntimeError("臨時獎勵資料格式改變")
+        item_id, status = row.get(id_field), row.get(status_field)
+        valid = (1, 2, 3, 4) if kind == "event_task" else (1, 2, 3)
+        locked, ended = row.get("locked", False), row.get("ended", False)
+        if (type(item_id) is not int or item_id <= 0 or (kind, item_id) in seen
+                or type(status) is not int or status not in valid or type(locked) is not bool
+                or type(ended) is not bool):
+            raise RuntimeError("臨時獎勵 ID 或狀態未知，停止操作")
+        seen.add((kind, item_id))
+        state = {1: "locked", 2: "available", 3: "already", 4: "ended"}[status]
+        if ended and state != "already":
+            state = "ended"
+        if state == "available" and (not unlocked or locked):
+            state = "locked"
+        label = f"活動任務 {item_id}" if kind == "event_task" else f"週年個人里程碑 {item_id}"
+        items.append({"kind": kind, "id": item_id, "label": label, "state": state})
+
+    groups, milestones = data.get("task_groups"), data.get("milestones")
+    if not isinstance(groups, list) or not isinstance(milestones, list):
+        raise RuntimeError("臨時活動任務或里程碑格式改變")
+    for group in groups:
+        if not isinstance(group, dict):
+            raise RuntimeError("臨時活動任務分組格式改變")
+        tab, locked, ended = group.get("tab_id"), group.get("locked", False), group.get("ended", False)
+        if (type(tab) is not int or tab not in (1, 2, 3) or type(locked) is not bool
+                or type(ended) is not bool or not isinstance(group.get("tasks"), list)):
+            raise RuntimeError("臨時活動任務分組狀態未知")
+        allowed = phase in ((2, 3, 6) if tab == 1 else (3, 4))
+        for row in group["tasks"]:
+            add(row, "event_task", "task_id", "task_status", allowed and not locked and not ended)
+    for row in milestones:
+        add(row, "event_milestone", "milestone_id", "claim_status", phase in (3, 4))
+    # ponytail: 本活動最多支援 32 個已完成獎勵，不自動完成任務、組隊或消耗抽獎券。
+    if len(items) > 32:
+        raise RuntimeError("臨時獎勵數量超出支援範圍")
+    return items
+
+
 def benefit_items(site_key: str, data: dict) -> list[dict]:
     """Plan only documented free gifts, login milestones and today's check-in."""
     if not isinstance(data, dict):
         raise RuntimeError("福利狀態格式改變，停止操作")
+    if site_key == "anniversary2026":
+        return anniversary_items(data)
     if site_key == "official":
         if type(data.get("signed_today")) is not bool:
             raise RuntimeError("signed_today 格式改變，停止操作")
@@ -648,6 +748,10 @@ def execute_benefits(site_key: str, session: dict, items: list[dict], claim: boo
                     path, payload = "/activity/claim-gift-pack", {"gift_type": item["id"]}
                 elif item["kind"] == "milestone":
                     path, payload = "/activity/claim-milestone", {"login_count": item["id"]}
+                elif item["kind"] == "event_task":
+                    path, payload = "/ccc-task/receive", {"task_id": item["id"]}
+                elif item["kind"] == "event_milestone":
+                    path, payload = "/personal-milestone-claim", {"milestone_id": item["id"]}
                 else:
                     raise RuntimeError("不支援的獎勵種類，停止操作")
                 activity_request(site_key, session, "POST", path, payload)
@@ -663,7 +767,14 @@ def execute_benefits(site_key: str, session: dict, items: list[dict], claim: boo
 
 def cmd_benefits(args) -> int:
     store = load_store(args.store)
-    keys = list(SITES) if args.site == "all" else [args.site]
+    keys = []
+    for key in (list(SITES) if args.site == "all" else [args.site]):
+        if site_window_state(key) != "active":
+            print(f"  {SITES[key]['label']}：尚未開始或已到期，跳過。")
+        elif args.site == "all" and SITES[key].get("expires_at") and key not in store:
+            print(f"  {key}：尚未設定，跳過臨時活動；可先 mint {key}。")
+        else:
+            keys.append(key)
     try:
         if any(not isinstance(store.get(k), dict) for k in keys):
             raise RuntimeError("所選站點缺少有效 session，請先 capture 或 mint")
@@ -678,7 +789,7 @@ def cmd_benefits(args) -> int:
                 raise RuntimeError(f"{key} 尚無 session，請先 capture 或 mint")
             verify_benefit_identity(key, store[key])
             prepared.append((key, benefit_items(key, benefit_snapshot(key, store[key]))))
-        labels = {"locked": "未達條件", "available": "可領取", "already": "已完成", "claimed": "本次完成"}
+        labels = {"locked": "未達條件", "available": "可領取", "already": "已完成", "claimed": "本次完成", "ended": "已結束"}
         for key, items in prepared:
             print(f"== {SITES[key]['label']}：{'執行' if args.claim else '只查詢'} ==")
             for item in execute_benefits(key, store[key], items, args.claim):
@@ -745,6 +856,7 @@ def cmd_logout(args) -> int:
     Only the account token is revoked. The stored roleInfoToken stays valid, so
     ``restore`` can bring the session back without any verification step.
     """
+    require_active_site(args.site)
     store = load_store(args.store)
     session = store.get(args.site)
     if not session or not session.get("account_token"):
@@ -842,7 +954,11 @@ def main(argv=None) -> int:
     benefits.set_defaults(func=cmd_benefits)
 
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except RuntimeError as exc:
+        print(f"停止：{exc}")
+        return 1
 
 
 if __name__ == "__main__":

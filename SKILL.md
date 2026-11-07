@@ -1,6 +1,6 @@
 ---
 name: swordofjustice-session
-description: 管理逆水寒台服官網會員中心與簽到福利，包括登入 session 擷取與恢復、今日簽到、免費會員禮包及累計登入獎勵領取。當使用者要求查詢或領取自己帳號的官網福利、恢復登入或重新綁定時使用。
+description: 管理逆水寒台服官網會員中心、簽到與臨時活動福利，包括登入 session 擷取與恢復、免費獎勵領取及活動到期停用。當使用者要求查詢或領取自己帳號的官網福利、恢復登入或重新綁定時使用。
 ---
 
 # 逆水寒台服官網福利
@@ -41,7 +41,17 @@ python scripts/sword_session.py benefits all             # 只查簽到與免費
 python scripts/sword_session.py benefits all --claim     # 有使用者領取授權時執行
 ```
 
-站點 key 只有 `vip`（會員中心）與 `official`（週三小確幸）。以上指令從 skill 根目錄執行，或把腳本路徑換成安裝位置的絕對路徑。
+常設站點為 vip（會員中心）與 official（週三小確幸）；臨時活動 anniversary2026 的使用方式與截止日期見下節。以上指令從 skill 根目錄執行，或把腳本路徑換成安裝位置的絕對路徑。
+
+## 臨時活動與截止時間
+
+anniversary2026 對應 [二週年活動](https://www.swordofjustice.com/h5/20261030/yyhdzh-cht/#/)。任務與組隊到 2027-01-01 23:59，已達成獎勵領取到 2027-01-15 23:59。規則未明示時區，工具採台北時間 UTC+8 作本地上限並尊重伺服器 phase。2027-01-16 00:00+08:00 起禁止該活動的登入、查詢與寫入，不因舊 session 仍有效而延長。
+
+同一角色可先 mint anniversary2026 --source vip，再 benefits anniversary2026 唯讀核對。需要活動角色綁定時由使用者在網頁手動完成。all 只納入已設定且未到期的臨時活動；未設定或到期時跳過，常設兩站照常處理。
+
+--claim 只領伺服器已完成且可領的任務與個人里程碑。不自動預約、回報未完成任務、組隊、投入抽獎券或綁手機。組隊預約獎勵會鎖隊，保留手動確認；與遊戲內已完成的組隊任務獎勵不同。每日爆料任務的未領獎勵不跨日保留。
+
+預熱 tab=1 只在 server phase=2/3/6 領取；週年 tab=2/3 與個人里程碑只在 phase=3/4 領取。未知狀態、locked 或 ended 一律不寫入。每項寫入前後均重查，過期時不嘗試其他途徑或重送。參見 [臨時活動說明](README.md#臨時活動二週年預約與任務) 與 [API 記錄](references/protocol.md#二週年臨時活動)。
 
 ## Standalone 使用
 
@@ -82,7 +92,7 @@ session = S.build_session("vip", store["vip"]["role_info_token"], None)
 
 先用 benefits all 查詢；使用者已要求簽到或領取時，可以接續 benefits all --claim，不必為同一批已授權的免費項目再次確認。單純問狀態或還沒授權領取時只查詢。
 
-範圍限於 official 的今日簽到，以及 vip 的日／週／月／賽季禮包、可補領差額與累計登入獎勵。根據伺服器狀態選擇可領項目，已完成與未達條件的跳過，不修改資格或時間。
+常設範圍為 official 今日簽到，以及 vip 日／週／月／賽季禮包、補領差額與累計登入獎勵；另可處理上述臨時活動的已完成獎勵。根據伺服器狀態選擇可領項目，已完成與未達條件的跳過，不修改資格或時間。
 
 工具會先驗證所有所選站點的帳號、角色、伺服器、活動及回應格式，再開始操作；all 模式身份混用會拒絕。每項領取前後都查狀態，POST 只送一次。逾時、格式改變、網站拒絕或結果不明時停止並報告，不能重試同一項、切換另一個帳號的 token，或改用瀏覽器再次點擊以規避結果不明。
 
@@ -131,7 +141,7 @@ python scripts/sword_session.py --edge-udd 'D:\SwordProfiles\user-a' --store 'D:
 
 ## 重要行為細節
 
-- 同一枚 roleInfoToken 已驗證可用於本工具支援的兩站；其他活動未驗證。
+- 同一角色的 roleInfoToken 已驗證可簽發 vip、official 與 anniversary2026 的 session；臨時活動不能超過自己的期限。
 - logout --browser 會刪除共用的活動 account cookie，以及目前網頁 origin 下所有符合 roleToken / loginAid 的 localStorage key，可能影響同源的其他活動；它不會完整清除 UniSDK 登入。只有使用者要求登出或測試時才執行。
 - 不使用全瀏覽器 cookie 清除操作，也不使用未確認存在的 Storage.clearCookies 方法。
 - POSIX save_store 會將 session 檔設為 `0600`，但不會調整既有 store 目錄的權限；檔案仍未加密。Windows ACL 設定依 Windows 實作處理，不能宣稱資料已加密。

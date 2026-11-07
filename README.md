@@ -6,7 +6,7 @@
 
 一般玩家的使用順序是：安裝依賴 → 開啟瀏覽器的 9222 → 手動登入與綁定 → 保存兩站 session → 查詢／執行領取。Windows 玩家依下方 [首次綁定或重新擷取](#首次綁定或重新擷取) 操作，Linux 玩家依 [玩家快速流程](#玩家快速流程linux) 操作；不需安裝任何 Agent。
 
-支援 [VIP 會員中心](https://www.swordofjustice.com/h5/20260424/vip/index.html#/) 與 [週三小確幸](https://www.swordofjustice.com/h5/20260722/officialwebfasthmt/#/)。
+常設活動支援 [VIP 會員中心](https://www.swordofjustice.com/h5/20260424/vip/index.html#/) 與 [週三小確幸](https://www.swordofjustice.com/h5/20260722/officialwebfasthmt/#/)。另支援有到期限制的 [二週年活動](https://www.swordofjustice.com/h5/20261030/yyhdzh-cht/#/)，用法與期限見 [臨時活動](#臨時活動二週年預約與任務)。
 
 **不需要 Chrome DevTools MCP。** 工具直接使用 HTTP 與瀏覽器的 Chrome DevTools Protocol（CDP）。CAPTCHA、登入與角色綁定由使用者手動完成。
 
@@ -16,7 +16,7 @@
 
 目前 `capture` 會從 localStorage 取第一枚含 `roleId` 的 `*_roleToken`，**不保證它是本次新綁定或目前帳號的憑證**，也可能讀到過期值。工具尚未實作保存前身份確認或完整帳號隔離。請在專用、乾淨的瀏覽器資料目錄操作，擷取後核對角色資訊。增加 `--wait` 不能解決舊資料被誤選的問題。
 
-`restore` / `mint` 可能從同一份 session 檔的另一站借用角色憑證，因此一份檔案只能保存同一個帳號的兩站資料。`--source` 是來源站點選擇，並非嚴格的帳號隔離機制。
+`restore` / `mint` 可能從同一份 session 檔的另一站借用角色憑證，因此一份檔案只能保存同一個帳號與角色的活動資料。`--source` 是來源站點選擇，並非嚴格的帳號隔離機制。
 
 ## 安裝
 
@@ -162,7 +162,7 @@ python scripts/sword_session.py --store $sessionFile status
 
 若身份不符，停止使用該 session；不要注入或接續活動操作。若簽發失敗，也不能視為已重新綁定成功。
 
-同一枚有效角色憑證已驗證可用於本工具支援的兩站。核對完成後，可為另一站簽發：
+同一枚有效角色憑證已驗證可用於兩個常設活動，以及下述二週年活動。核對完成後，可為另一站簽發：
 
 ```powershell
 python scripts/sword_session.py --store $sessionFile mint official --source vip
@@ -209,11 +209,43 @@ python scripts/sword_session.py --store $sessionFile benefits all --claim
 
 已領取與未達條件的項目會顯示狀態並跳過。此指令只處理上述免費項目，且是單次執行，不會自動設定排程。
 
-每次執行先向網站核對 aid、角色、伺服器與活動。選擇 all 時，兩站必須是相同帳號與角色，且兩站的身份及狀態格式都確認通過後才開始領取；這項檢查不代表 capture 已具有保存前身份確認功能。
+每次執行先向網站核對 aid、角色、伺服器與活動。選擇 all 時，納入的活動必須是相同帳號與角色，且身份及狀態格式都確認通過後才開始領取；這項檢查不代表 capture 已具有保存前身份確認功能。
 
 每個可領項目在送出前會重新查一次狀態，成功後再查是否已標記完成。一次 POST 失敗、逾時、要求重新驗證或後續狀態無法確認時會停止，不自動重送；重新執行前請先用不帶 --claim 的指令查詢狀態。網站標記已領取與遊戲信箱實際入帳是不同層次，後者需在遊戲內確認。
 
 2026-10-26 的實機查詢顯示，原開發帳號的今日簽到、日／週禮包及登入里程碑已完成，其他禮包未達條件。當日沒有可新增領取的項目；實機驗證涵蓋查詢及跳過，實際可領取分支以 mock 回歸測試驗證，不能宣稱已成功發送新獎勵。
+
+## 臨時活動：二週年預約與任務
+
+站點 key：`anniversary2026`。依 [官方活動頁](https://www.swordofjustice.com/h5/20261030/yyhdzh-cht/#/) 2026-11-07 的活動規則：
+
+| 項目 | 截止／開始 |
+|---|---|
+| 預熱任務 | 2026-11-27 09:59 截止 |
+| 週年任務 | 2026-11-27 10:00 開始 |
+| 任務完成、組隊期間 | 2027-01-01 23:59 截止 |
+| 已達成獎勵領取 | 2027-01-15 23:59 截止 |
+
+工具按台北時間（UTC+8）設定本地日期上限，並另外尊重伺服器的活動階段、鎖定與到期狀態。規則本身未明示時區；若官方變更日期或介面，需重新核對設定。`2027-01-16 00:00:00+08:00` 起，工具會跳過這個活動，不再對它登入、查詢或領取；原本兩個常設活動繼續處理。
+
+同一帳號已有 vip session 時，可先為活動簽發並核對狀態：
+
+```powershell
+python scripts/sword_session.py --store $sessionFile mint anniversary2026 --source vip
+python scripts/sword_session.py --store $sessionFile benefits anniversary2026
+```
+
+Linux 使用 `.venv/bin/python` 取代 `python`。如果網站仍要求活動角色綁定，請在活動頁手動完成，也可用 `capture anniversary2026` 擷取自己的授權。
+
+支援領取伺服器已標記完成的預熱／週年個人／週年組隊任務獎勵，以及已解鎖的週年個人里程碑。每日看爆料、遊戲內條件與社群任務需先由玩家完成；程式不回報未完成任務。預約、加入／退出隊伍、手機綁定與抽獎投入都需在頁面手動操作；組隊預約獎勵領取會鎖定隊伍，也保留由玩家手動確認。
+
+```powershell
+python scripts/sword_session.py --store $sessionFile benefits anniversary2026 --claim
+```
+
+已設定且尚未到期時，`benefits all --claim` 會一併處理此活動。尚未設定或已到期則顯示跳過，不會要求既有使用者一定要綁定新活動。活動結束後的領獎期僅處理伺服器仍允許領取的獎勵，不補做或補領已過每日期限的任務。
+
+2026-11-07 已實測簽發相同角色的活動 session，並唯讀核對任務 API。當時預熱任務均已領取，週年任務與里程碑尚未解鎖；沒有執行新的獎勵領取。可領取分支與到期停用邏輯以離線測試覆蓋。
 
 ## 指令參考
 
@@ -226,7 +258,7 @@ python scripts/sword_session.py --store $sessionFile benefits all --claim
 | `restore vip --browser` | 重簽、注入 cookie 並重載頁面 | 是 |
 | `mint official --source vip` | 為另一站簽發 | 否 |
 | `refresh vip` | 嘗試重簽，失敗或過期時退回 capture | 退回 capture 時需要 |
-| `status` | 呼叫兩站首頁 API 檢查 session | 否 |
+| `status` | 檢查已保存活動的 session，跳過到期活動 | 否 |
 | `list` | 顯示保存的身份、時間與憑證到期資訊 | 否 |
 | `benefits all` | 只查簽到與免費會員獎勵狀態 | 否 |
 | `benefits all --claim` | 執行符合條件的免費簽到／領獎 | 否 |

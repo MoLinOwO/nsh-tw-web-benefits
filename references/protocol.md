@@ -127,3 +127,30 @@ VIP 前端常數：禮包 status=1 未解鎖、2 可領、3 已領、4 可補領
 領取前會再讀一次該項狀態，避免另一分頁已完成。一次操作不自動重送，不跟隨重導向；POST 逾時或後續狀態未確認時，先唯讀查詢結果。這並非跨程序的原子鎖，仍應避免對同一帳號平行執行多個領取程序。
 
 本機帳號實查 signed_today=true，VIP 日、週禮包與所有登入里程碑為已完成，月、賽季禮包未達條件。因此當日沒有可驗證的新獎勵寫入；自動領取分支以 mock 測試驗證。
+
+## 二週年臨時活動
+
+2026-11-07 核對 [活動頁](https://www.swordofjustice.com/h5/20261030/yyhdzh-cht/#/)、[主程式](https://www.swordofjustice.com/pc/zt/20261022115521/assets/main-DeBIuvoJ.js)、[任務／互動模組](https://www.swordofjustice.com/pc/zt/20261022115521/assets/tab-2weOJlTJ.js) 與 [任務領取介面](https://www.swordofjustice.com/pc/zt/20261022115521/assets/index-BAL64nfx.js)。
+
+- key：anniversary2026；activityName：nshhmt_yyhd_20261030。
+- API base：https://api.swordofjustice.com/nshm-nshhmt-yyhd-20261030。
+- 任務完成期限為 2027-01-01 23:59；領獎期限另到 2027-01-15 23:59。工具以 UTC+8 設 exclusive cutoff 2027-01-16 00:00，原文未標時區，另尊重伺服器 phase。
+
+| 方法與路徑 | 回應／參數 |
+|---|---|
+| GET /activity-status?location=hmt | phase、booked、role_bound |
+| GET /user-info?lang=zh_hant | is_bound、role_name、server_name、user_type；不依賴此處提供角色 ID |
+| GET /ccc-task/list | task_groups；各組 tab_id、locked、ended、tasks |
+| POST /ccc-task/receive | JSON task_id；只領 task_status=2 的已完成任務 |
+| GET /personal-milestone-list | completion_count、milestones；每項 milestone_id、claim_status、locked、ended |
+| POST /personal-milestone-claim | JSON milestone_id；只領 claim_status=2 且已解鎖的項目 |
+
+主程式的請求攔截器把前端 camelCase 轉為 snake_case，所以原始 HTTP payload 使用 task_id / milestone_id，不能照抄前端的 taskId / milestoneId。
+
+伺服器 phase：1 未開、2 預約、3 週年、4 領獎期、5 已結束、6 預熱。與前端 store 的 phase 數字不同。任務狀態 task_status：1 未完成、2 可領、3 已領、4 已結束；里程碑 claim_status：1 未達、2 可領、3 已領。
+
+遵循前端階段限制：tab=1 在 phase=2/3/6 可領；tab=2/3 在 phase=3/4 可領；個人里程碑在 phase=3/4 可領。2027-01-02 起只保留伺服器容許的既有獎勵，不完成新任務；2027-01-16 起由本地截止檢查在 HTTP/CDP 之前阻擋該活動。每次 POST 前都重新檢查期限。
+
+未實作 appointment/submit、team/create、team/enter、team/claim、ccc-task/complete、抽獎投入或手機綁定。team/claim 的前端會要求首次領取者確認不能退出／解散隊伍，與一般免費任務領獎不同。
+
+已用既有角色憑證簽發新活動 session 並通過共用 account info 的身份核對，唯讀驗證 raw snake_case 回應。當日 phase=6、預熱任務均 task_status=3，其他組與里程碑鎖定；沒有新的實機 POST 領獎成功紀錄。
